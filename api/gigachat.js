@@ -13,6 +13,7 @@ const crypto = require("crypto");
 
 const OAUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth";
 const CHAT_URL = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions";
+const FILE_URL = (id) => "https://gigachat.devices.sberbank.ru/api/v1/files/" + id + "/content";
 
 let cachedToken = null;
 let cachedExp = 0;
@@ -49,6 +50,25 @@ function request(url, headers, body, timeoutMs) {
     req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "timeout" })));
     req.on("error", reject);
     req.end(body);
+  });
+}
+
+// GET бинарного файла (скачивание картинки) — request() выше читает ответ как utf8-текст,
+// для JPEG это испортит байты, поэтому тут собираем Buffer-чанки.
+function requestBinaryGet(url, headers, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request(
+      { hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: "GET", headers, agent, timeout: timeoutMs },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode, buffer: Buffer.concat(chunks) }));
+      }
+    );
+    req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "timeout" })));
+    req.on("error", reject);
+    req.end();
   });
 }
 
@@ -100,6 +120,37 @@ async function chat(token, model, prompt) {
   }
 }
 
+// Экспериментальный режим "настоящего" рисунка: встроенная в GigaChat генерация
+// изображений (Kandinsky) через function_call. Ответ — текст с тегом
+// <img src="FILE_ID" fuse="true"/>, сама картинка скачивается отдельным запросом.
+async function chatImage(token, model, prompt) {
+  try {
+    return await request(
+      CHAT_URL,
+      { "Content-Type": "application/json", Accept: "application/json", Authorization: "Bearer " + token },
+      JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: "Ты — добрый детский художник. Рисуй простые, яркие, добрые картинки для детей, без жести и реализма ужасов." },
+          { role: "user", content: prompt }
+        ],
+        function_call: "auto"
+      }),
+      90_000
+    );
+  } catch (e) {
+    throw fail(e.code === "timeout" ? 504 : 502, e.code === "timeout" ? "timeout" : "gigachat_unreachable", e.message);
+  }
+}
+
+async function downloadFile(token, fileId) {
+  try {
+    return await requestBinaryGet(FILE_URL(fileId), { Accept: "application/jpg", Authorization: "Bearer " + token }, 30_000);
+  } catch (e) {
+    throw fail(e.code === "timeout" ? 504 : 502, e.code === "timeout" ? "timeout" : "gigachat_unreachable", e.message);
+  }
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") return res.status(405).json({ error: "method_not_allowed" });
@@ -114,6 +165,29 @@ module.exports = async (req, res) => {
 
   let model = process.env.GIGACHAT_MODEL || "GigaChat";
   if (body && typeof body.model === "string" && /^[\w.\-]{1,60}$/.test(body.model)) model = body.model;
+
+  if (body && body.mode === "image") {
+    try {
+      let r = await chatImage(await getToken(false), model, prompt);
+      if (r.status === 401) r = await chatImage(await getToken(true), model, prompt);
+      if (r.status === 429) return res.status(429).json({ error: "rate_limited" });
+      if (r.status !== 200) {
+        console.error("GigaChat image error", r.status, r.text.slice(0, 500));
+        return res.status(502).json({ error: "gigachat_" + r.status, detail: r.text.slice(0, 300) });
+      }
+      let d;
+      try { d = JSON.parse(r.text); } catch { return res.status(502).json({ error: "empty" }); }
+      const content = d && d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+      const m = typeof content === "string" && content.match(/src="([a-zA-Z0-9-]{10,})"/);
+      if (!m) return res.status(502).json({ error: "no_image", detail: String(content || "").slice(0, 200) });
+      const fileRes = await downloadFile(await getToken(false), m[1]);
+      if (fileRes.status !== 200) return res.status(502).json({ error: "file_" + fileRes.status });
+      return res.status(200).json({ image: "data:image/jpeg;base64," + fileRes.buffer.toString("base64") });
+    } catch (e) {
+      console.error("Proxy image error", e.code, e.detail || e.message);
+      return res.status(e.status || 502).json({ error: e.code || "gigachat_unreachable", detail: e.detail || "" });
+    }
+  }
 
   try {
     let r = await chat(await getToken(false), model, prompt);

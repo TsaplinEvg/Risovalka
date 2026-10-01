@@ -12,17 +12,21 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);overflow:hidden}
   #app{position:fixed;inset:0;display:flex;flex-direction:column}
-  #topbar{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;gap:8px;align-items:center;padding:10px 12px;pointer-events:none}
+  #topbar{flex:none;z-index:20;display:flex;gap:8px;align-items:center;padding:10px 12px;pointer-events:none}
   #topbar > *{pointer-events:auto}
   .tbtn{background:var(--panel);border:1px solid rgba(0,0,0,.06);border-radius:14px;padding:10px 14px;font-size:15px;font-weight:600;color:var(--ink);box-shadow:var(--shadow);cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none;transition:transform .08s,background .15s}
   .tbtn:active{transform:scale(.95)} .tbtn:hover{background:#fafbff}
   .tbtn.ghost{background:rgba(255,255,255,.85);backdrop-filter:blur(6px)}
   #title{margin-left:auto;font-size:14px;opacity:.55;font-weight:600;padding-right:4px}
-  #stage{flex:1;position:relative;background:#fff}
+  #stage{flex:1;min-height:0;min-width:0;position:relative;background:#fff;overflow:hidden}
   #paper{width:100%;height:100%;display:block;touch-action:none}
+  #aiPic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;background:#fff}
+  #aiPic.show{display:block}
+  .modebtn{flex:1}
+  .modebtn.active{background:var(--accent);color:#fff}
   #hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(24px,5vw,52px);font-weight:800;color:#e7e9f2;pointer-events:none;user-select:none;letter-spacing:1px;transition:opacity .4s}
   #hint.hidden{opacity:0}
-  #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:20;display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 12px calc(14px + env(safe-area-inset-bottom)) 12px;pointer-events:none}
+  #bottombar{flex:none;z-index:20;display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 12px calc(14px + env(safe-area-inset-bottom)) 12px;pointer-events:none}
   #bottombar > *{pointer-events:auto}
   #status{min-height:22px;font-size:14px;color:#5a5f74;background:rgba(255,255,255,.9);padding:4px 12px;border-radius:999px;backdrop-filter:blur(6px);box-shadow:var(--shadow);max-width:min(92vw,720px);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .25s}
   #status.show{opacity:1} #status.err{background:#ffe3e3;color:#b00020;font-weight:700}
@@ -76,6 +80,8 @@
 
   <div id="stage">
     <svg id="paper" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet" aria-label="Рисунок"></svg>
+    <svg id="measure" width="0" height="0" style="position:absolute;visibility:hidden" aria-hidden="true"></svg>
+    <img id="aiPic" alt="Рисунок от GigaChat">
     <div id="hint">Что нарисуем?</div>
     <div id="bigerr" role="alert"></div>
   </div>
@@ -104,6 +110,15 @@
         Пароль нужен, чтобы чужие люди по вашей ссылке не тратили ваши токены GigaChat.
         Он хранится только в этом браузере. Модель можно оставить пустой — тогда используется модель по умолчанию с сервера.
       </div>
+      <label>Режим рисования</label>
+      <div class="row">
+        <button class="btn-ghost modebtn" id="modeTemplates">🧩 Шаблоны</button>
+        <button class="btn-ghost modebtn" id="modeAI">🎨 По-настоящему</button>
+      </div>
+      <div class="note">
+        «По-настоящему» — эксперимент: GigaChat рисует настоящую картинку (Kandinsky) вместо фигур.
+        Долго (до минуты) и часто рисует не то, что просили — зато выглядит красиво. Переключается сразу, без «Сохранить».
+      </div>
       <div class="row">
         <button class="btn-ghost" id="settingsCancel">Отмена</button>
         <button class="btn-primary" id="settingsSave">Сохранить</button>
@@ -126,15 +141,18 @@ let undoStack = [];
 let idCounter = 0;
 let busy = false;
 
+let aiImages = [];   // история картинок режима "По-настоящему": data URL строки
+let aiIndex = -1;    // какая из них сейчас показана
+
 const $ = id => document.getElementById(id);
-const paper = $("paper"), hintEl = $("hint"), statusEl = $("status"), bigerrEl = $("bigerr");
+const paper = $("paper"), measureSvg = $("measure"), aiPicEl = $("aiPic"), hintEl = $("hint"), statusEl = $("status"), bigerrEl = $("bigerr");
 const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ============================================================
    2. НАСТРОЙКИ
    ============================================================ */
 const LS_KEY = "drawer_settings_gigachat_v2";
-let settings = { password: "", model: "" };
+let settings = { password: "", model: "", mode: "templates" }; // mode: "templates" | "image"
 function loadSettings(){
   try{
     const raw = localStorage.getItem(LS_KEY);
@@ -144,9 +162,32 @@ function loadSettings(){
 function saveSettings(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(settings)); }catch(e){} }
 loadSettings();
 
+function syncModeButtons(){
+  $("modeTemplates").classList.toggle("active", settings.mode !== "image");
+  $("modeAI").classList.toggle("active", settings.mode === "image");
+}
+function applyModeVisibility(){
+  paper.style.display = settings.mode === "image" ? "none" : "block";
+  aiPicEl.classList.toggle("show", settings.mode === "image" && !!aiPicEl.src);
+  hintEl.classList.toggle("hidden", settings.mode === "image" ? aiImages.length > 0 : scene.length > 0);
+}
+function setMode(m){
+  if(settings.mode === m) return;
+  settings.mode = m;
+  saveSettings();
+  syncModeButtons();
+  applyModeVisibility();
+  updateButtons();
+}
+$("modeTemplates").onclick = () => setMode("templates");
+$("modeAI").onclick = () => setMode("image");
+syncModeButtons();
+applyModeVisibility();
+
 function openSettings(){
   $("password").value = settings.password || "";
   $("model").value = settings.model || "";
+  syncModeButtons();
   $("settingsModal").classList.add("show");
   setTimeout(() => $("password").focus(), 50);
 }
@@ -183,16 +224,96 @@ function clearBigError(){ bigerrEl.classList.remove("show"); }
 /* ============================================================
    4. ОТРИСОВКА (Rough.js)
    Каждый объект — группа с transform: фигуры рисуются в локальных
-   координатах 0..100, а толщина линий не масштабируется.
+   координатах 0..100 (так просит промпт), а толщина линий не масштабируется.
+   Модель не всегда укладывается в 0..100, поэтому перед отрисовкой меряем
+   реальный bbox фигур и вписываем его в box — иначе вылезающие за 0..100
+   фигуры уезжают за пределы холста и становятся невидимыми.
    ============================================================ */
 const num = v => (typeof v === "number" ? v : parseFloat(v));
 const ok = (...v) => v.every(x => Number.isFinite(x));
 
+function plainShapeEl(sh){
+  if(!sh || typeof sh !== "object") return null;
+  let el;
+  switch(sh.t){
+    case "circle": {
+      const cx = num(sh.cx), cy = num(sh.cy), r = num(sh.r);
+      if(!ok(cx, cy, r) || r <= 0) return null;
+      el = document.createElementNS(SVG_NS, "circle");
+      el.setAttribute("cx", cx); el.setAttribute("cy", cy); el.setAttribute("r", r);
+      break;
+    }
+    case "ellipse": {
+      const cx = num(sh.cx), cy = num(sh.cy), rx = num(sh.rx), ry = num(sh.ry);
+      if(!ok(cx, cy, rx, ry) || rx <= 0 || ry <= 0) return null;
+      el = document.createElementNS(SVG_NS, "ellipse");
+      el.setAttribute("cx", cx); el.setAttribute("cy", cy); el.setAttribute("rx", rx); el.setAttribute("ry", ry);
+      break;
+    }
+    case "rect": {
+      const x = num(sh.x), y = num(sh.y), w = num(sh.w), h = num(sh.h);
+      if(!ok(x, y, w, h)) return null;
+      el = document.createElementNS(SVG_NS, "rect");
+      el.setAttribute("x", x); el.setAttribute("y", y); el.setAttribute("width", w); el.setAttribute("height", h);
+      break;
+    }
+    case "line": {
+      const a = num(sh.x1), b = num(sh.y1), c = num(sh.x2), d = num(sh.y2);
+      if(!ok(a, b, c, d)) return null;
+      el = document.createElementNS(SVG_NS, "line");
+      el.setAttribute("x1", a); el.setAttribute("y1", b); el.setAttribute("x2", c); el.setAttribute("y2", d);
+      break;
+    }
+    case "poly": {
+      if(!Array.isArray(sh.p)) return null;
+      const pts = sh.p.map(q => [num(q && q[0]), num(q && q[1])]).filter(q => ok(q[0], q[1]));
+      if(pts.length < 2) return null;
+      el = document.createElementNS(SVG_NS, "polygon");
+      el.setAttribute("points", pts.map(q => q[0] + "," + q[1]).join(" "));
+      break;
+    }
+    case "path": {
+      if(typeof sh.d !== "string" || !sh.d.length || sh.d.length >= 4000) return null;
+      el = document.createElementNS(SVG_NS, "path");
+      el.setAttribute("d", sh.d);
+      break;
+    }
+    default: return null;
+  }
+  return el;
+}
+
+function shapesBBox(shapes){
+  if(!Array.isArray(shapes) || !shapes.length) return null;
+  const g = document.createElementNS(SVG_NS, "g");
+  (shapes || []).forEach(sh => {
+    const el = plainShapeEl(sh);
+    if(el) g.appendChild(el);
+  });
+  if(!g.childNodes.length) return null;
+  measureSvg.appendChild(g);
+  let bbox = null;
+  try{ bbox = g.getBBox(); }catch(e){}
+  measureSvg.removeChild(g);
+  if(!bbox || !(bbox.width > 0) || !(bbox.height > 0)) return null;
+  return { x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
+}
+
 function renderObject(item, animate){
-  const { box, shapes, seed, id } = item;
-  const s = Math.min(box.w, box.h) / 100;
-  const tx = box.x + (box.w - 100 * s) / 2;
-  const ty = box.y + (box.h - 100 * s) / 2;
+  const { box, template, color, seed, id } = item;
+  const gen = TEMPLATES[template];
+  const shapes = gen ? gen(color, seed) : [];
+  const bbox = shapesBBox(shapes);
+  let s, tx, ty;
+  if(bbox){
+    s = Math.min(box.w / bbox.w, box.h / bbox.h);
+    tx = box.x + (box.w - bbox.w * s) / 2 - bbox.x * s;
+    ty = box.y + (box.h - bbox.h * s) / 2 - bbox.y * s;
+  }else{
+    s = Math.min(box.w, box.h) / 100;
+    tx = box.x + (box.w - 100 * s) / 2;
+    ty = box.y + (box.h - 100 * s) / 2;
+  }
 
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("data-id", id);
@@ -283,6 +404,779 @@ function shapeSize(sh){
 }
 
 /* ============================================================
+   4b. БИБЛИОТЕКА ШАБЛОНОВ
+   GigaChat стабильно плохо придумывает координаты фигур "с нуля" —
+   даже на топовом тарифе получается нечто, непохожее на зверя.
+   Поэтому модель больше не изобретает shapes: она выбирает готовый
+   шаблон (template) + цвет, а геометрию детерминированно строит код.
+   Координаты шаблонов не обязаны лежать строго в 0..100 — renderObject
+   меряет фактический bbox и сам вписывает его в box объекта.
+   ============================================================ */
+function hexOr(c, fb){ return (typeof c === "string" && /^#[0-9a-f]{3,8}$/i.test(c)) ? c : fb; }
+// детерминированный ГПСЧ от seed объекта — чтобы один и тот же зверь каждый раз
+// выглядел чуть иначе (пропорции, хвост/уши), но не менялся при перерисовке/undo
+function rngFromSeed(seed){
+  let s = (Number(seed) || 1) % 2147483647;
+  if(s <= 0) s += 2147483646;
+  const next = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for(let i=0;i<8;i++) next(); // прогрев: первые числа LCG почти линейны от seed, без прогрева джиттер не варьируется
+  return next;
+}
+function pick(rng, arr){ return arr[Math.floor(rng() * arr.length) % arr.length]; }
+const T_INK = "#2A2D3A";
+
+function faceDots(cx, cy, spread, r){
+  return [
+    { t:"circle", cx: cx - spread, cy, r: r || 2.6, fill: T_INK },
+    { t:"circle", cx: cx + spread, cy, r: r || 2.6, fill: T_INK }
+  ];
+}
+function smile(cx, cy, w){
+  return { t:"path", d:`M${cx-w} ${cy} Q${cx} ${cy+w*0.6} ${cx+w} ${cy}`, fill:"none" };
+}
+
+function earShapes(style, hx, hy, hr, color){
+  switch(style){
+    case "triangle": return [
+      { t:"poly", p:[[hx-hr*0.75,hy-hr*0.55],[hx-hr*1.15,hy-hr*1.9],[hx-hr*0.15,hy-hr*1.05]], fill:color },
+      { t:"poly", p:[[hx+hr*0.15,hy-hr*1.05],[hx+hr*0.95,hy-hr*2.0],[hx+hr*0.8,hy-hr*0.5]], fill:color }
+    ];
+    case "round": return [
+      { t:"circle", cx: hx-hr*0.75, cy: hy-hr*0.95, r: hr*0.4, fill:color },
+      { t:"circle", cx: hx+hr*0.75, cy: hy-hr*0.95, r: hr*0.4, fill:color }
+    ];
+    case "floppy": return [
+      { t:"ellipse", cx: hx-hr*1.05, cy: hy+hr*0.3, rx: hr*0.38, ry: hr*0.85, fill:color },
+      { t:"ellipse", cx: hx+hr*1.0, cy: hy+hr*0.35, rx: hr*0.36, ry: hr*0.8, fill:color }
+    ];
+    case "long": return [
+      { t:"ellipse", cx: hx-hr*0.5, cy: hy-hr*2.15, rx: hr*0.3, ry: hr*1.3, fill:color },
+      { t:"ellipse", cx: hx+hr*0.5, cy: hy-hr*2.15, rx: hr*0.3, ry: hr*1.3, fill:color }
+    ];
+    case "tiny": return [
+      { t:"circle", cx: hx-hr*0.7, cy: hy-hr*0.9, r: hr*0.22, fill:color },
+      { t:"circle", cx: hx+hr*0.7, cy: hy-hr*0.9, r: hr*0.22, fill:color }
+    ];
+    case "horns": return [
+      { t:"path", d:`M${hx-hr*0.5} ${hy-hr*0.9} Q${hx-hr*0.8} ${hy-hr*1.8} ${hx-hr*0.3} ${hy-hr*2.1}`, fill:"none", stroke:"#8a8a8a" },
+      { t:"path", d:`M${hx+hr*0.5} ${hy-hr*0.9} Q${hx+hr*0.8} ${hy-hr*1.8} ${hx+hr*0.3} ${hy-hr*2.1}`, fill:"none", stroke:"#8a8a8a" }
+    ];
+    default: return [];
+  }
+}
+
+function tailShapes(style, tx, ty, color){
+  switch(style){
+    case "straight": return [{ t:"line", x1:tx, y1:ty, x2:tx+16, y2:ty-6, stroke:color }];
+    case "wag": return [{ t:"path", d:`M${tx} ${ty} Q${tx+14} ${ty-16} ${tx+9} ${ty-28}`, fill:"none", stroke:color }];
+    case "fluffy": return [{ t:"ellipse", cx:tx+13, cy:ty-6, rx:14, ry:10, fill:color }];
+    case "curl": return [{ t:"path", d:`M${tx} ${ty} Q${tx+18} ${ty-16} ${tx+4} ${ty-26} Q${tx-6} ${ty-32} ${tx+6} ${ty-34}`, fill:"none", stroke:color }];
+    case "curly": return [{ t:"path", d:`M${tx} ${ty} Q${tx+10} ${ty-9} ${tx+2} ${ty-13} Q${tx-4} ${ty-16} ${tx+4} ${ty-17}`, fill:"none", stroke:color }];
+    case "short": return [{ t:"ellipse", cx:tx+6, cy:ty, rx:6, ry:5, fill:color }];
+    default: return [];
+  }
+}
+
+function legShapes(count, bx, bw, by, legStyle, color){
+  const n = count || 4;
+  const h = legStyle === "long" ? 34 : legStyle === "short" ? 13 : 22;
+  const w = legStyle === "long" ? 6 : 8;
+  const legs = [];
+  for(let i=0;i<n;i++){
+    const x = bx + (bw * (i+0.5))/n - w/2;
+    legs.push({ t:"rect", x, y:by, w, h, fill: color });
+  }
+  return legs;
+}
+
+function quadruped(o){
+  const color = o.color;
+  const rng = o.rng || Math.random;
+  const jitter = () => 0.92 + rng()*0.16; // ±8% — у каждого экземпляра свои пропорции
+  const bodyRX = (o.bodyRX || 34) * jitter(), bodyRY = (o.bodyRY || 20) * jitter();
+  const bcx = 58, bcy = 58;
+  const headR = (o.headR || 18) * jitter();
+  const hcx = 24, hcy = bcy - bodyRY*0.6;
+  const earStyle = Array.isArray(o.earStyle) ? pick(rng, o.earStyle) : (o.earStyle || "round");
+  const tailStyle = Array.isArray(o.tailStyle) ? pick(rng, o.tailStyle) : (o.tailStyle || "straight");
+  const mane = o.mane && rng() < (o.maneChance ?? 1);
+  const pattern = Array.isArray(o.pattern) ? pick(rng, o.pattern) : o.pattern;
+  const shapes = [];
+  shapes.push({ t:"ellipse", cx:bcx, cy:bcy, rx:bodyRX, ry:bodyRY, fill:color });
+  if(pattern === "spots"){
+    [[44,50],[64,46],[74,64],[50,70],[36,60]].forEach(([x,y]) => shapes.push({ t:"ellipse", cx:x, cy:y, rx:6, ry:5, fill:T_INK }));
+  }
+  if(pattern === "stripes"){
+    [[42,42,50,60],[56,40,64,58],[70,46,78,62],[36,52,44,68]].forEach(([x1,y1,x2,y2]) => shapes.push({ t:"line", x1,y1,x2,y2, stroke:T_INK, strokeWidth:3 }));
+  }
+  if(pattern === "wool"){
+    [[46,44],[58,40],[70,46],[40,58],[54,62],[68,60],[78,52]].forEach(([x,y]) => shapes.push({ t:"circle", cx:x, cy:y, r:9, fill:color }));
+  }
+  if(mane){
+    for(let a=0;a<10;a++){
+      const ang = (a/10) * Math.PI*2;
+      shapes.push({ t:"line",
+        x1: hcx + Math.cos(ang)*(headR*0.95), y1: hcy + Math.sin(ang)*(headR*0.95),
+        x2: hcx + Math.cos(ang)*(headR*1.75), y2: hcy + Math.sin(ang)*(headR*1.75),
+        stroke: o.maneColor || "#B5651D", strokeWidth:3 });
+    }
+  }
+  shapes.push(...legShapes(o.legCount||4, bcx-bodyRX*0.9, bodyRX*1.8, bcy+bodyRY*0.55, o.legStyle, color));
+  shapes.push(...tailShapes(tailStyle, bcx+bodyRX*0.85, bcy, color));
+  shapes.push({ t:"circle", cx:hcx, cy:hcy, r:headR, fill:color });
+  shapes.push(...earShapes(earStyle, hcx, hcy, headR, color));
+  if(o.horns) shapes.push(...earShapes("horns", hcx, hcy, headR, color));
+  if(o.quills){
+    for(let i=0;i<8;i++){
+      const t0 = i/8;
+      const px = bcx - bodyRX*0.3 + t0*bodyRX*1.1, py = bcy - bodyRY*0.9;
+      shapes.push({ t:"line", x1:px, y1:py, x2:px + (i%2?6:-6), y2:py-16, stroke:T_INK, strokeWidth:2 });
+    }
+  }
+  if(o.snout){
+    shapes.push({ t:"ellipse", cx:hcx-headR*0.95, cy:hcy+headR*0.25, rx:headR*0.42, ry:headR*0.3, fill:color });
+    shapes.push({ t:"circle", cx:hcx-headR*1.2, cy:hcy+headR*0.2, r:headR*0.13, fill:T_INK });
+  }else{
+    shapes.push({ t:"circle", cx:hcx-headR*0.8, cy:hcy+headR*0.15, r:headR*0.15, fill:T_INK });
+  }
+  shapes.push(...faceDots(hcx-headR*0.05, hcy-headR*0.1, headR*0.35));
+  shapes.push(smile(hcx-headR*0.05, hcy+headR*0.4, headR*0.3));
+  return shapes;
+}
+
+function birdBase(o){
+  const color = o.color;
+  const rng = o.rng || Math.random;
+  const jitter = () => 0.92 + rng()*0.16;
+  const shapes = [];
+  const bcx=55, bcy=58, brx=26*jitter(), bry=20*jitter();
+  shapes.push({ t:"ellipse", cx:bcx, cy:bcy, rx:brx, ry:bry, fill:color });
+  if(o.bellyPatch) shapes.push({ t:"ellipse", cx:bcx+3, cy:bcy+bry*0.25, rx:brx*0.55, ry:bry*0.7, fill:"#fff" });
+  shapes.push({ t:"poly", p:[[bcx+brx*0.9,bcy-bry*0.2],[bcx+brx*1.7,bcy-bry*0.5],[bcx+brx*1.6,bcy+bry*0.3],[bcx+brx*0.85,bcy+bry*0.25]], fill: o.tailColor||color });
+  if(o.fanTail){
+    for(let i=0;i<7;i++){
+      const ang = -0.6 + i*0.2;
+      const ex = bcx+brx*1.3 + Math.cos(ang)*34, ey = bcy + Math.sin(ang)*34;
+      shapes.push({ t:"ellipse", cx:ex, cy:ey, rx:9, ry:5, fill: i%2? (o.tailColor||"#2fae6a") : "#3fd38a" });
+    }
+  }
+  shapes.push({ t:"ellipse", cx:bcx, cy:bcy+bry*0.1, rx:brx*0.55, ry:bry*0.5, fill:o.wingColor||color });
+  shapes.push({ t:"line", x1:bcx-6, y1:bcy+bry*0.9, x2:bcx-8, y2:bcy+bry*0.9+16, stroke:T_INK, strokeWidth:2 });
+  shapes.push({ t:"line", x1:bcx+6, y1:bcy+bry*0.9, x2:bcx+8, y2:bcy+bry*0.9+16, stroke:T_INK, strokeWidth:2 });
+  const hcx = bcx-brx*0.95, hcy = bcy-bry*0.85, hr = (o.headR||15)*jitter();
+  shapes.push({ t:"circle", cx:hcx, cy:hcy, r:hr, fill:color });
+  if(o.earTufts){
+    shapes.push({ t:"poly", p:[[hcx-hr*0.6,hcy-hr*0.9],[hcx-hr*0.9,hcy-hr*1.8],[hcx-hr*0.1,hcy-hr*1.1]], fill:color });
+    shapes.push({ t:"poly", p:[[hcx+hr*0.1,hcy-hr*1.1],[hcx+hr*0.9,hcy-hr*1.8],[hcx+hr*0.6,hcy-hr*0.9]], fill:color });
+  }
+  shapes.push({ t:"poly", p:[[hcx-hr*1.0,hcy+hr*0.1],[hcx-hr*1.6,hcy+hr*0.25],[hcx-hr*1.0,hcy+hr*0.45]], fill:o.beakColor||"#F4A623" });
+  if(o.bigEyes){
+    shapes.push({ t:"circle", cx:hcx-hr*0.4, cy:hcy-hr*0.1, r:hr*0.5, fill:"#fff" });
+    shapes.push({ t:"circle", cx:hcx+hr*0.35, cy:hcy-hr*0.1, r:hr*0.5, fill:"#fff" });
+    shapes.push({ t:"circle", cx:hcx-hr*0.4, cy:hcy-hr*0.1, r:hr*0.22, fill:T_INK });
+    shapes.push({ t:"circle", cx:hcx+hr*0.35, cy:hcy-hr*0.1, r:hr*0.22, fill:T_INK });
+  }else{
+    shapes.push(...faceDots(hcx, hcy-hr*0.1, hr*0.4, hr*0.14));
+  }
+  return shapes;
+}
+
+function fishBase(o){
+  const color = o.color;
+  const shapes = [];
+  const cx=52, cy=55, rx=30, ry=18;
+  if(o.curvedBody){
+    shapes.push({ t:"path", d:`M${cx-rx} ${cy} Q${cx} ${cy-ry*1.6} ${cx+rx} ${cy} Q${cx} ${cy+ry*1.3} ${cx-rx} ${cy}`, fill:color });
+  }else{
+    shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
+  }
+  shapes.push({ t:"poly", p:[[cx+rx*0.9,cy],[cx+rx*1.7,cy-16],[cx+rx*1.7,cy+16]], fill:color });
+  shapes.push({ t:"poly", p:[[cx-6,cy-ry*0.9],[cx+10,cy-ry*1.8],[cx+16,cy-ry*0.6]], fill:o.finColor||color });
+  if(o.beak){
+    shapes.push({ t:"poly", p:[[cx-rx*0.95,cy-4],[cx-rx*1.35,cy],[cx-rx*0.95,cy+6]], fill:color });
+  }
+  if(o.spout){
+    [0,1,2].forEach(i => shapes.push({ t:"line", x1:cx-rx*0.6+i*4, y1:cy-ry*1.1, x2:cx-rx*0.6+i*4-3, y2:cy-ry*1.7-i*2, stroke:"#9fd8ff", strokeWidth:2 }));
+  }
+  shapes.push({ t:"circle", cx:cx-rx*0.55, cy:cy-4, r:4, fill:T_INK });
+  return shapes;
+}
+
+function tentacled(o){
+  const color = o.color;
+  const shapes = [];
+  const cx=50, cy=38, rx=30, ry=24;
+  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
+  const n = o.arms || 8;
+  for(let i=0;i<n;i++){
+    const x0 = cx - rx*0.8 + (rx*1.6)*(i/(n-1));
+    shapes.push({ t:"path", d:`M${x0} ${cy+ry*0.6} Q${x0 + (i%2?8:-8)} ${cy+ry*1.6} ${x0} ${cy+ry*2.4}`, fill:"none", stroke:color, strokeWidth:4 });
+  }
+  if(o.face){
+    shapes.push(...faceDots(cx-6, cy-2, 8));
+    shapes.push(smile(cx-6, cy+8, 9));
+  }
+  return shapes;
+}
+
+function crabShapes(color){
+  const shapes = [];
+  const cx=55, cy=55, rx=32, ry=18;
+  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
+  shapes.push({ t:"line", x1:cx-10, y1:cy-ry*0.9, x2:cx-12, y2:cy-ry*1.8, stroke:T_INK, strokeWidth:2 });
+  shapes.push({ t:"line", x1:cx+10, y1:cy-ry*0.9, x2:cx+12, y2:cy-ry*1.8, stroke:T_INK, strokeWidth:2 });
+  shapes.push({ t:"circle", cx:cx-12, cy:cy-ry*1.8, r:4, fill:"#fff" });
+  shapes.push({ t:"circle", cx:cx+12, cy:cy-ry*1.8, r:4, fill:"#fff" });
+  shapes.push({ t:"circle", cx:cx-12, cy:cy-ry*1.8, r:1.8, fill:T_INK });
+  shapes.push({ t:"circle", cx:cx+12, cy:cy-ry*1.8, r:1.8, fill:T_INK });
+  shapes.push({ t:"poly", p:[[cx-rx*0.95,cy-6],[cx-rx*1.5,cy-14],[cx-rx*1.4,cy+2],[cx-rx*1.0,cy+6]], fill:color });
+  shapes.push({ t:"poly", p:[[cx+rx*0.95,cy-6],[cx+rx*1.5,cy-14],[cx+rx*1.4,cy+2],[cx+rx*1.0,cy+6]], fill:color });
+  for(let i=0;i<3;i++){
+    const y1 = cy+ry*0.3+i*6;
+    shapes.push({ t:"line", x1:cx-rx*0.6, y1, x2:cx-rx*1.1-i*4, y2:y1+14, stroke:color, strokeWidth:4 });
+    shapes.push({ t:"line", x1:cx+rx*0.6, y1, x2:cx+rx*1.1+i*4, y2:y1+14, stroke:color, strokeWidth:4 });
+  }
+  return shapes;
+}
+
+function turtleShapes(color){
+  const shapes = [];
+  const cx=55,cy=55,rx=30,ry=20;
+  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:"#3b6b4a" });
+  shapes.push({ t:"ellipse", cx, cy, rx:rx*0.95, ry:ry*0.9, fill:color });
+  [[-10,-6],[10,-6],[0,6],[-16,8],[16,8]].forEach(([dx,dy]) => shapes.push({ t:"circle", cx:cx+dx, cy:cy+dy, r:5, fill:"#3b6b4a" }));
+  shapes.push({ t:"ellipse", cx:cx-rx*1.05, cy:cy+ry*0.1, rx:10, ry:7, fill:color });
+  shapes.push(...faceDots(cx-rx*1.1, cy, 4, 1.8));
+  shapes.push({ t:"poly", p:[[cx-rx*0.7,cy+ry*0.7],[cx-rx*1.0,cy+ry*1.3],[cx-rx*0.4,cy+ry*0.9]], fill:color });
+  shapes.push({ t:"poly", p:[[cx+rx*0.7,cy+ry*0.7],[cx+rx*1.0,cy+ry*1.3],[cx+rx*0.4,cy+ry*0.9]], fill:color });
+  shapes.push({ t:"poly", p:[[cx-rx*0.6,cy-ry*0.7],[cx-rx*0.9,cy-ry*1.2],[cx-rx*0.3,cy-ry*0.9]], fill:color });
+  shapes.push({ t:"poly", p:[[cx+rx*0.6,cy-ry*0.7],[cx+rx*0.9,cy-ry*1.2],[cx+rx*0.3,cy-ry*0.9]], fill:color });
+  return shapes;
+}
+
+function frogShapes(color){
+  const shapes = [];
+  const cx=55,cy=62,rx=28,ry=18;
+  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
+  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:9, fill:color });
+  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:9, fill:color });
+  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:4, fill:"#fff" });
+  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:4, fill:"#fff" });
+  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:1.8, fill:T_INK });
+  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:1.8, fill:T_INK });
+  shapes.push(smile(cx, cy-ry*0.3, 12));
+  shapes.push({ t:"poly", p:[[cx-rx*0.8,cy+ry*0.6],[cx-rx*1.3,cy+ry*1.1],[cx-rx*0.9,cy+ry*1.3],[cx-rx*0.5,cy+ry*0.9]], fill:color });
+  shapes.push({ t:"poly", p:[[cx+rx*0.8,cy+ry*0.6],[cx+rx*1.3,cy+ry*1.1],[cx+rx*0.9,cy+ry*1.3],[cx+rx*0.5,cy+ry*0.9]], fill:color });
+  shapes.push({ t:"line", x1:cx-rx*0.6, y1:cy+ry*0.5, x2:cx-rx*0.9, y2:cy+ry*0.9, stroke:color, strokeWidth:5 });
+  shapes.push({ t:"line", x1:cx+rx*0.6, y1:cy+ry*0.5, x2:cx+rx*0.9, y2:cy+ry*0.9, stroke:color, strokeWidth:5 });
+  return shapes;
+}
+
+function snakeShapes(color){
+  return [
+    { t:"path", d:"M5 70 Q25 20 50 55 Q75 90 95 40", fill:"none", stroke:color, strokeWidth:14 },
+    { t:"poly", p:[[95,40],[108,34],[108,46]], fill:color },
+    { t:"circle", cx:100, cy:38, r:2, fill:T_INK },
+    { t:"line", x1:108, y1:40, x2:116, y2:36, stroke:T_INK },
+    { t:"line", x1:108, y1:40, x2:116, y2:44, stroke:T_INK }
+  ];
+}
+
+function starPoly(cx, cy, r, color){
+  const pts = [];
+  for(let i=0;i<10;i++){
+    const ang = -Math.PI/2 + i*Math.PI/5;
+    const rad = i%2===0 ? r : r*0.45;
+    pts.push([cx+Math.cos(ang)*rad, cy+Math.sin(ang)*rad]);
+  }
+  return { t:"poly", p:pts, fill:color };
+}
+
+function starfishShapes(color){
+  return [starPoly(55,55,32,color), { t:"circle", cx:55, cy:55, r:4, fill:T_INK }];
+}
+
+function wheeledVehicle(o){
+  const color = o.color;
+  const shapes = [];
+  const bw = o.long ? 80 : 60, bh = 24, bx = 50 - bw/2, by = 50;
+  shapes.push({ t:"rect", x:bx, y:by, w:bw, h:bh, fill:color });
+  shapes.push({ t:"rect", x:bx+bw*0.15, y:by-18, w:bw*(o.long?0.7:0.5), h:20, fill:color });
+  const winCount = o.windows || 2;
+  for(let i=0;i<winCount;i++){
+    shapes.push({ t:"rect", x:bx+bw*0.2+i*(bw*0.55/winCount), y:by-14, w:bw*0.4/winCount, h:12, fill:"#BEE3F8" });
+  }
+  if(o.cargo) shapes.push({ t:"rect", x:bx+bw*0.6, y:by-10, w:bw*0.35, h:34, fill:color });
+  const wheelY = by+bh;
+  const wheelXs = o.long ? [bx+bw*0.2, bx+bw*0.5, bx+bw*0.8] : [bx+bw*0.22, bx+bw*0.78];
+  wheelXs.forEach(wx => {
+    shapes.push({ t:"circle", cx:wx, cy:wheelY, r:11, fill:"#2A2D3A" });
+    shapes.push({ t:"circle", cx:wx, cy:wheelY, r:5, fill:"#C9CCD6" });
+  });
+  return shapes;
+}
+
+function trainShapes(color){
+  const shapes = [];
+  for(let i=0;i<3;i++){
+    const bx = 10 + i*40;
+    shapes.push({ t:"rect", x:bx, y:50, w:32, h:26, fill: i===0?color:"#D8DEE6" });
+    shapes.push({ t:"circle", cx:bx+8, cy:78, r:7, fill:T_INK });
+    shapes.push({ t:"circle", cx:bx+24, cy:78, r:7, fill:T_INK });
+  }
+  shapes.push({ t:"rect", x:14, y:30, w:10, h:20, fill:color });
+  shapes.push({ t:"rect", x:10, y:40, w:30, h:12, fill:color });
+  return shapes;
+}
+
+function planeShapes(color){
+  const shapes = [];
+  shapes.push({ t:"ellipse", cx:55, cy:50, rx:45, ry:12, fill:color });
+  shapes.push({ t:"poly", p:[[45,46],[25,10],[55,42]], fill:color });
+  shapes.push({ t:"poly", p:[[45,56],[25,92],[55,60]], fill:color });
+  shapes.push({ t:"poly", p:[[92,45],[108,36],[98,52]], fill:color });
+  for(let i=0;i<4;i++) shapes.push({ t:"circle", cx:30+i*14, cy:48, r:3, fill:"#9fd8ff" });
+  return shapes;
+}
+
+function helicopterShapes(color){
+  return [
+    { t:"ellipse", cx:45, cy:55, rx:26, ry:16, fill:color },
+    { t:"rect", x:70, y:52, w:30, h:6, fill:color },
+    { t:"poly", p:[[96,50],[106,45],[106,60],[96,58]], fill:color },
+    { t:"line", x1:20, y1:30, x2:70, y2:30, stroke:T_INK, strokeWidth:3 },
+    { t:"line", x1:45, y1:38, x2:45, y2:30, stroke:T_INK, strokeWidth:3 },
+    { t:"circle", cx:38, cy:52, r:9, fill:"#BEE3F8" },
+    { t:"line", x1:40, y1:71, x2:34, y2:84, stroke:T_INK, strokeWidth:3 },
+    { t:"line", x1:52, y1:71, x2:58, y2:84, stroke:T_INK, strokeWidth:3 },
+    { t:"line", x1:28, y1:84, x2:64, y2:84, stroke:T_INK, strokeWidth:3 }
+  ];
+}
+
+function boatShapes(color){
+  return [
+    { t:"poly", p:[[10,70],[100,70],[85,90],[25,90]], fill:color },
+    { t:"line", x1:55, y1:70, x2:55, y2:15, stroke:"#8B5A2B", strokeWidth:4 },
+    { t:"poly", p:[[56,18],[56,66],[95,66]], fill:"#F2EADF" }
+  ];
+}
+
+function bicycleShapes(color){
+  return [
+    { t:"circle", cx:25, cy:75, r:20, fill:"none", stroke:color, strokeWidth:4 },
+    { t:"circle", cx:85, cy:75, r:20, fill:"none", stroke:color, strokeWidth:4 },
+    { t:"poly", p:[[25,75],[55,40],[85,75],[55,75]], fill:"none", stroke:color, strokeWidth:4 },
+    { t:"line", x1:55, y1:40, x2:40, y2:20, stroke:color, strokeWidth:4 },
+    { t:"line", x1:33, y1:18, x2:48, y2:18, stroke:color, strokeWidth:4 },
+    { t:"line", x1:55, y1:75, x2:70, y2:20, stroke:color, strokeWidth:4 },
+    { t:"ellipse", cx:55, cy:38, rx:7, ry:3, fill:T_INK }
+  ];
+}
+
+function rocketShapes(color){
+  return [
+    { t:"poly", p:[[50,5],[70,45],[30,45]], fill:color },
+    { t:"rect", x:32, y:45, w:36, h:35, fill:color },
+    { t:"poly", p:[[32,80],[18,98],[32,92]], fill:"#8D97A5" },
+    { t:"poly", p:[[68,80],[82,98],[68,92]], fill:"#8D97A5" },
+    { t:"circle", cx:50, cy:60, r:9, fill:"#BEE3F8" },
+    { t:"poly", p:[[40,92],[50,112],[60,92]], fill:"#F2994A" }
+  ];
+}
+
+function airBalloonShapes(color){
+  return [
+    { t:"ellipse", cx:50, cy:35, rx:34, ry:38, fill:color },
+    { t:"line", x1:24, y1:65, x2:38, y2:88, stroke:T_INK },
+    { t:"line", x1:76, y1:65, x2:62, y2:88, stroke:T_INK },
+    { t:"rect", x:38, y:88, w:24, h:16, fill:"#8B5A2B" }
+  ];
+}
+
+function sunShapes(color){
+  const shapes = [{ t:"circle", cx:50, cy:50, r:26, fill:color }];
+  for(let i=0;i<8;i++){
+    const ang = i*Math.PI/4;
+    shapes.push({ t:"line", x1:50+Math.cos(ang)*30, y1:50+Math.sin(ang)*30, x2:50+Math.cos(ang)*42, y2:50+Math.sin(ang)*42, stroke:color, strokeWidth:4 });
+  }
+  shapes.push(...faceDots(44,46,7));
+  shapes.push(smile(44,56,10));
+  return shapes;
+}
+
+function cloudShapes(color){
+  return [
+    { t:"ellipse", cx:40, cy:55, rx:24, ry:16, fill:color },
+    { t:"ellipse", cx:62, cy:50, rx:22, ry:18, fill:color },
+    { t:"ellipse", cx:78, cy:58, rx:18, ry:13, fill:color },
+    { t:"ellipse", cx:50, cy:62, rx:30, ry:14, fill:color }
+  ];
+}
+
+function rainbowShapes(){
+  const colors = ["#E8544A","#F2994A","#F2C94C","#6FBF73","#4F8FE3","#8A5FE0"];
+  return colors.map((c,i) => ({ t:"path", d:`M5 ${92-i*2} Q50 ${10+i*10} 95 ${92-i*2}`, fill:"none", stroke:c, strokeWidth:7 }));
+}
+
+function moonShapes(color){
+  return [
+    { t:"circle", cx:55, cy:50, r:30, fill:color },
+    { t:"circle", cx:68, cy:40, r:26, fill:"#fff" }
+  ];
+}
+
+function treeShapes(color){
+  return [
+    { t:"rect", x:46, y:55, w:10, h:35, fill:"#8B5A2B" },
+    { t:"ellipse", cx:51, cy:38, rx:30, ry:28, fill:color }
+  ];
+}
+
+function flowerShapes(color){
+  const shapes = [];
+  shapes.push({ t:"line", x1:50, y1:60, x2:50, y2:96, stroke:"#4CAF6B", strokeWidth:4 });
+  shapes.push({ t:"ellipse", cx:42, cy:88, rx:8, ry:4, fill:"#4CAF6B" });
+  shapes.push({ t:"ellipse", cx:58, cy:92, rx:8, ry:4, fill:"#4CAF6B" });
+  const petals = 6;
+  for(let i=0;i<petals;i++){
+    const ang = i*2*Math.PI/petals;
+    shapes.push({ t:"ellipse", cx:50+Math.cos(ang)*18, cy:50+Math.sin(ang)*18, rx:12, ry:8, fill:color });
+  }
+  shapes.push({ t:"circle", cx:50, cy:50, r:10, fill:"#F2C94C" });
+  return shapes;
+}
+
+function mushroomShapes(color){
+  return [
+    { t:"rect", x:44, y:60, w:12, h:28, fill:"#F2EADF" },
+    { t:"ellipse", cx:50, cy:52, rx:32, ry:18, fill:color },
+    { t:"circle", cx:38, cy:48, r:5, fill:"#F2EADF" },
+    { t:"circle", cx:56, cy:44, r:4, fill:"#F2EADF" },
+    { t:"circle", cx:66, cy:54, r:5, fill:"#F2EADF" }
+  ];
+}
+
+function mountainShapes(color){
+  return [
+    { t:"poly", p:[[5,95],[40,20],[70,95]], fill:color },
+    { t:"poly", p:[[45,95],[75,35],[105,95]], fill:color },
+    { t:"poly", p:[[33,38],[40,20],[47,38]], fill:"#fff" },
+    { t:"poly", p:[[68,52],[75,35],[82,52]], fill:"#fff" }
+  ];
+}
+
+function raincloudShapes(color){
+  const shapes = cloudShapes(color);
+  for(let i=0;i<5;i++) shapes.push({ t:"line", x1:30+i*12, y1:78, x2:26+i*12, y2:95, stroke:"#4F8FE3", strokeWidth:3 });
+  return shapes;
+}
+
+function lightningShapes(color){
+  return [{ t:"poly", p:[[55,5],[35,50],[52,50],[42,95],[70,42],[52,42]], fill:color }];
+}
+
+function snowmanShapes(){
+  return [
+    { t:"circle", cx:50, cy:85, r:24, fill:"#fff" },
+    { t:"circle", cx:50, cy:50, r:18, fill:"#fff" },
+    { t:"circle", cx:50, cy:22, r:12, fill:"#fff" },
+    { t:"poly", p:[[50,22],[68,25],[50,28]], fill:"#F2994A" },
+    { t:"circle", cx:50, cy:48, r:2, fill:T_INK }, { t:"circle", cx:50, cy:58, r:2, fill:T_INK }, { t:"circle", cx:50, cy:68, r:2, fill:T_INK },
+    ...faceDots(46,18,4,1.6),
+    { t:"line", x1:32, y1:48, x2:12, y2:38, stroke:"#8B5A2B", strokeWidth:3 },
+    { t:"line", x1:68, y1:48, x2:88, y2:38, stroke:"#8B5A2B", strokeWidth:3 }
+  ];
+}
+
+function houseShapes(color){
+  return [
+    { t:"rect", x:20, y:50, w:60, h:45, fill:color },
+    { t:"poly", p:[[12,50],[50,15],[88,50]], fill:"#8B5A2B" },
+    { t:"rect", x:44, y:70, w:14, h:25, fill:"#5A3A22" },
+    { t:"rect", x:28, y:58, w:14, h:14, fill:"#BEE3F8" },
+    { t:"rect", x:60, y:58, w:14, h:14, fill:"#BEE3F8" }
+  ];
+}
+
+function castleShapes(color){
+  const shapes = houseShapes(color);
+  shapes.push({ t:"rect", x:4, y:40, w:16, h:55, fill:color });
+  shapes.push({ t:"rect", x:82, y:40, w:16, h:55, fill:color });
+  [0,1,2].forEach(i => shapes.push({ t:"rect", x:6+i*6, y:34, w:4, h:8, fill:color }));
+  [0,1,2].forEach(i => shapes.push({ t:"rect", x:84+i*6, y:34, w:4, h:8, fill:color }));
+  shapes.push({ t:"poly", p:[[90,40],[90,20],[100,30]], fill:"#E8544A" });
+  return shapes;
+}
+
+function trafficlightShapes(){
+  return [
+    { t:"rect", x:46, y:40, w:10, h:55, fill:"#3b3b3b" },
+    { t:"rect", x:34, y:5, w:34, h:55, fill:"#2A2D3A" },
+    { t:"circle", cx:51, cy:18, r:8, fill:"#E8544A" },
+    { t:"circle", cx:51, cy:33, r:8, fill:"#F2C94C" },
+    { t:"circle", cx:51, cy:48, r:8, fill:"#6FBF73" }
+  ];
+}
+
+function flagShapes(color){
+  return [
+    { t:"line", x1:20, y1:10, x2:20, y2:95, stroke:"#8B5A2B", strokeWidth:4 },
+    { t:"poly", p:[[20,12],[80,22],[20,38]], fill:color }
+  ];
+}
+
+function clockShapes(color){
+  return [
+    { t:"circle", cx:50, cy:50, r:34, fill:color, stroke:T_INK },
+    { t:"line", x1:50, y1:50, x2:50, y2:28, stroke:T_INK, strokeWidth:3 },
+    { t:"line", x1:50, y1:50, x2:66, y2:58, stroke:T_INK, strokeWidth:3 },
+    { t:"circle", cx:50, cy:22, r:2, fill:T_INK },
+    { t:"circle", cx:50, cy:78, r:2, fill:T_INK },
+    { t:"circle", cx:22, cy:50, r:2, fill:T_INK },
+    { t:"circle", cx:78, cy:50, r:2, fill:T_INK }
+  ];
+}
+
+function balloonShapes(color){
+  return [
+    { t:"ellipse", cx:50, cy:40, rx:22, ry:28, fill:color },
+    { t:"poly", p:[[44,66],[56,66],[50,74]], fill:color },
+    { t:"path", d:"M50 74 Q46 85 52 95 Q58 104 50 112", fill:"none", stroke:T_INK }
+  ];
+}
+
+function ballShapes(color){
+  return [
+    { t:"circle", cx:50, cy:50, r:32, fill:color },
+    { t:"path", d:"M20 50 Q50 30 80 50", fill:"none", stroke:T_INK, strokeWidth:2 },
+    { t:"path", d:"M20 50 Q50 70 80 50", fill:"none", stroke:T_INK, strokeWidth:2 },
+    { t:"line", x1:50, y1:18, x2:50, y2:82, stroke:T_INK, strokeWidth:2 }
+  ];
+}
+
+function heartShapes(color){
+  return [{ t:"path", d:"M50 92 C10 60 10 25 35 20 C45 18 50 30 50 38 C50 30 55 18 65 20 C90 25 90 60 50 92 Z", fill:color }];
+}
+
+function robotShapes(color){
+  return [
+    { t:"rect", x:30, y:15, w:40, h:32, fill:color },
+    { t:"rect", x:24, y:50, w:52, h:40, fill:color },
+    { t:"line", x1:50, y1:15, x2:50, y2:4, stroke:T_INK, strokeWidth:3 },
+    { t:"circle", cx:50, cy:4, r:4, fill:"#E8544A" },
+    { t:"circle", cx:42, cy:30, r:6, fill:"#9fd8ff" },
+    { t:"circle", cx:58, cy:30, r:6, fill:"#9fd8ff" },
+    { t:"rect", x:38, y:40, w:24, h:4, fill:T_INK },
+    { t:"rect", x:6, y:52, w:16, h:30, fill:color },
+    { t:"rect", x:78, y:52, w:16, h:30, fill:color },
+    { t:"rect", x:30, y:90, w:16, h:22, fill:color },
+    { t:"rect", x:54, y:90, w:16, h:22, fill:color }
+  ];
+}
+
+function personShapes(color){
+  return [
+    { t:"circle", cx:50, cy:22, r:16, fill:color },
+    { t:"rect", x:38, y:38, w:24, h:36, fill:"#4F8FE3" },
+    { t:"line", x1:38, y1:44, x2:20, y2:70, stroke:color, strokeWidth:6 },
+    { t:"line", x1:62, y1:44, x2:80, y2:70, stroke:color, strokeWidth:6 },
+    { t:"line", x1:44, y1:74, x2:38, y2:104, stroke:T_INK, strokeWidth:6 },
+    { t:"line", x1:56, y1:74, x2:62, y2:104, stroke:T_INK, strokeWidth:6 },
+    ...faceDots(45,20,5),
+    smile(45,27,7)
+  ];
+}
+
+function ghostShapes(){
+  return [
+    { t:"path", d:"M20 90 L20 40 Q20 10 50 10 Q80 10 80 40 L80 90 L68 78 L56 90 L44 78 L32 90 Z", fill:"#EAF2FF" },
+    ...faceDots(44,42,8),
+    { t:"circle", cx:44, cy:58, r:4, fill:"none", stroke:T_INK }
+  ];
+}
+
+const TEMPLATE_INFO = {
+  cat:"кошка, кот, котёнок, киса, киска, кошечка, котик, мурка",
+  dog:"собака, пёс, щенок, собачка, песик, дружок, барбос",
+  mouse:"мышка, мышь, мышонок",
+  rabbit:"зайчик, заяц, зайка, кролик, крольчонок",
+  fox:"лиса, лисичка, лис, лисёнок",
+  wolf:"волк, волчонок, волчица",
+  bear:"медведь, мишка, медвежонок, мишутка",
+  lion:"лев, львёнок, львица",
+  elephant:"слон, слонёнок, слоник",
+  giraffe:"жираф, жирафик",
+  zebra:"зебра, зебрёнок",
+  cow:"корова, коровка, бурёнка, телёнок, телёнка",
+  horse:"лошадь, лошадка, конь, пони, жеребёнок",
+  pig:"свинья, свинка, поросёнок, хрюша, хрюшка",
+  sheep:"овца, овечка, баран, барашек, коза, козочка, ягнёнок",
+  hedgehog:"ёжик, ёж",
+  squirrel:"белка, белочка, бельчонок",
+  turtle:"черепаха, черепашка",
+  frog:"лягушка, лягушонок, жаба, квакушка",
+  snake:"змея, змейка, змеюка",
+  bird:"птичка, птица, воробей, воробушек, синица, пташка",
+  owl:"сова, совёнок, филин",
+  parrot:"попугай, попугайчик",
+  penguin:"пингвин, пингвинёнок",
+  peacock:"павлин",
+  fish:"рыба, рыбка, рыбёшка",
+  crab:"краб, крабик",
+  octopus:"осьминог, осьминожка",
+  jellyfish:"медуза",
+  dolphin:"дельфин, дельфинчик",
+  whale:"кит, китёнок, китик",
+  starfish:"морская звезда, морская звёздочка",
+  car:"машина, машинка, автомобиль, авто",
+  truck:"грузовик, грузовичок",
+  bus:"автобус, автобусик",
+  train:"поезд, паровоз, паровозик, электричка",
+  plane:"самолёт, самолётик",
+  helicopter:"вертолёт, вертолётик",
+  boat:"кораблик, корабль, лодка, лодочка",
+  bicycle:"велосипед, велик",
+  rocket:"ракета, ракетка-космос",
+  airballoon:"воздушный шар с корзиной, аэростат",
+  sun:"солнце, солнышко",
+  cloud:"облако, облачко, тучка",
+  rainbow:"радуга, радужка",
+  star:"звезда, звёздочка",
+  moon:"луна, месяц",
+  tree:"дерево, деревце",
+  flower:"цветок, цветочек, цветик, ромашка",
+  mushroom:"гриб, грибок, мухомор",
+  mountain:"гора, горка, холм",
+  raincloud:"туча, дождевая туча, дождик",
+  lightning:"молния",
+  snowman:"снеговик",
+  house:"дом, домик",
+  castle:"замок, крепость",
+  trafficlight:"светофор",
+  flag:"флаг, флажок",
+  clock:"часы, часики",
+  balloon:"воздушный шарик-игрушка, шарик",
+  ball:"мяч, мячик",
+  heart:"сердце, сердечко",
+  robot:"робот, роботик",
+  person:"человек, человечек, мальчик, девочка",
+  ghost:"привидение, призрак"
+};
+
+// характерный звук — после удачного добавления озвучивается вместе с ответом модели
+const TEMPLATE_SOUND = {
+  cat:"Мяу!", dog:"Гав-гав!", mouse:"Пи-пи!", rabbit:"Топ-топ!",
+  fox:"Тяв!", wolf:"У-у-у!", bear:"Р-р-р!", lion:"Р-р-ры!",
+  elephant:"Ту-у-у!", cow:"Му-у!", horse:"Иго-го!", pig:"Хрю-хрю!",
+  sheep:"Бе-е!", frog:"Ква-ква!", bird:"Чик-чирик!", owl:"Угу-угу!",
+  parrot:"Попка дурак!", penguin:"Гу-гу!", snake:"Ш-ш-ш!",
+  car:"Би-би!", truck:"Би-биип!", bus:"Би-би!", train:"Ту-ту, чух-чух!",
+  plane:"Вжжжух!", helicopter:"Тр-р-р-р!", boat:"Ту-у-у!", rocket:"Пуск! Фьюх!"
+};
+
+function elephantShapes(color){
+  return [
+    { t:"ellipse", cx:58, cy:58, rx:34, ry:24, fill:color },
+    { t:"circle", cx:24, cy:46, r:19, fill:color },
+    { t:"ellipse", cx:12, cy:40, rx:13, ry:17, fill:color },
+    { t:"path", d:"M11 55 Q4 75 13 88", fill:"none", stroke:color, strokeWidth:9 },
+    ...legShapes(4, 28, 56, 76, "short", color),
+    { t:"line", x1:92, y1:52, x2:99, y2:62, stroke:color, strokeWidth:5 },
+    ...faceDots(21,42,5,2.6),
+    smile(21,52,6)
+  ];
+}
+
+function giraffeShapes(color){
+  return [
+    { t:"ellipse", cx:55, cy:92, rx:26, ry:14, fill:color },
+    { t:"rect", x:48, y:28, w:13, h:64, fill:color },
+    { t:"circle", cx:55, cy:20, r:12, fill:color },
+    { t:"line", x1:50, y1:10, x2:48, y2:2, stroke:color, strokeWidth:4 },
+    { t:"line", x1:60, y1:10, x2:62, y2:2, stroke:color, strokeWidth:4 },
+    { t:"circle", cx:48, cy:2, r:2.4, fill:T_INK }, { t:"circle", cx:62, cy:2, r:2.4, fill:T_INK },
+    ...legShapes(4, 32, 46, 102, "long", color),
+    [[46,46],[62,56],[50,70],[64,80],[42,88]].map(([x,y]) => ({ t:"ellipse", cx:x, cy:y, rx:6, ry:5, fill:"#B5651D" })),
+    ...faceDots(51,18,4,2),
+    smile(51,24,5)
+  ].flat();
+}
+
+const TEMPLATES = {
+  cat: (c,seed) => quadruped({ color:hexOr(c,"#FFB74D"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["curl","wag"] }),
+  dog: (c,seed) => quadruped({ color:hexOr(c,"#C68B59"), rng:rngFromSeed(seed), earStyle:["floppy","triangle"], tailStyle:["wag","straight"], snout:true }),
+  mouse: (c,seed) => quadruped({ color:hexOr(c,"#C9CCD6"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"straight", bodyRX:24, bodyRY:14, headR:13, legStyle:"short" }),
+  rabbit: (c,seed) => quadruped({ color:hexOr(c,"#F5F0E6"), rng:rngFromSeed(seed), earStyle:"long", tailStyle:"short" }),
+  fox: (c,seed) => quadruped({ color:hexOr(c,"#E8702A"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:"fluffy", snout:true }),
+  wolf: (c,seed) => quadruped({ color:hexOr(c,"#8D97A5"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["straight","wag"], snout:true, bodyRX:36, bodyRY:19 }),
+  bear: (c,seed) => quadruped({ color:hexOr(c,"#8B5A2B"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"short", legStyle:"short", bodyRX:36, bodyRY:24, headR:20 }),
+  lion: (c,seed) => quadruped({ color:hexOr(c,"#E8B64A"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"wag", mane:true, maneChance:0.6 }),
+  elephant: c => elephantShapes(hexOr(c,"#B0B6BE")),
+  giraffe: c => giraffeShapes(hexOr(c,"#F2C94C")),
+  zebra: (c,seed) => quadruped({ color:hexOr(c,"#FFFFFF"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"fluffy", legStyle:"long", pattern:"stripes" }),
+  cow: (c,seed) => quadruped({ color:hexOr(c,"#FFFFFF"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"wag", pattern:["spots","spots","none"], legStyle:"long", horns:true }),
+  horse: (c,seed) => quadruped({ color:hexOr(c,"#8B5A2B"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"fluffy", legStyle:"long", bodyRX:38, bodyRY:19 }),
+  pig: (c,seed) => quadruped({ color:hexOr(c,"#F6A6B2"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"curly", legStyle:"short", snout:true }),
+  sheep: (c,seed) => quadruped({ color:hexOr(c,"#F2F0E8"), rng:rngFromSeed(seed), earStyle:"floppy", tailStyle:"short", pattern:"wool" }),
+  hedgehog: (c,seed) => quadruped({ color:hexOr(c,"#8B7355"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"short", legStyle:"short", bodyRX:28, bodyRY:18, headR:13, snout:true, quills:true }),
+  squirrel: (c,seed) => quadruped({ color:hexOr(c,"#C1702F"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"fluffy", legStyle:"short", bodyRX:24, bodyRY:16, headR:14 }),
+
+  turtle: c => turtleShapes(hexOr(c,"#6FBF73")),
+  frog: c => frogShapes(hexOr(c,"#6CC24A")),
+  snake: c => snakeShapes(hexOr(c,"#5FBF6B")),
+
+  bird: (c,seed) => birdBase({ color:hexOr(c,"#4FA3E3"), rng:rngFromSeed(seed) }),
+  owl: (c,seed) => birdBase({ color:hexOr(c,"#8B6B4A"), rng:rngFromSeed(seed), earTufts:true, bigEyes:true }),
+  parrot: (c,seed) => birdBase({ color:hexOr(c,"#45C26B"), rng:rngFromSeed(seed), wingColor:"#F2C94C", tailColor:"#E85D5D" }),
+  penguin: (c,seed) => birdBase({ color:hexOr(c,"#2B2E36"), rng:rngFromSeed(seed), bellyPatch:true, beakColor:"#F2994A" }),
+  peacock: (c,seed) => birdBase({ color:hexOr(c,"#2FAE8E"), rng:rngFromSeed(seed), fanTail:true }),
+
+  fish: c => fishBase({ color:hexOr(c,"#4FA3E3") }),
+  dolphin: c => fishBase({ color:hexOr(c,"#8AA9C9"), curvedBody:true, beak:true }),
+  whale: c => fishBase({ color:hexOr(c,"#5C7FA0"), curvedBody:true, spout:true }),
+  crab: c => crabShapes(hexOr(c,"#E25C45")),
+  octopus: c => tentacled({ color:hexOr(c,"#C25FBD"), arms:8, face:true }),
+  jellyfish: c => tentacled({ color:hexOr(c,"#C9A6E0"), arms:6, face:false }),
+  starfish: c => starfishShapes(hexOr(c,"#F2994A")),
+
+  car: c => wheeledVehicle({ color:hexOr(c,"#E8544A"), segments:1 }),
+  truck: c => wheeledVehicle({ color:hexOr(c,"#4F8FE3"), segments:2, cargo:true }),
+  bus: c => wheeledVehicle({ color:hexOr(c,"#F2C94C"), long:true, windows:4 }),
+  train: c => trainShapes(hexOr(c,"#4F8FE3")),
+  plane: c => planeShapes(hexOr(c,"#D8DEE6")),
+  helicopter: c => helicopterShapes(hexOr(c,"#E85D5D")),
+  boat: c => boatShapes(hexOr(c,"#C68B59")),
+  bicycle: c => bicycleShapes(hexOr(c,"#4F8FE3")),
+  rocket: c => rocketShapes(hexOr(c,"#E8544A")),
+  airballoon: c => airBalloonShapes(hexOr(c,"#E8544A")),
+
+  sun: c => sunShapes(hexOr(c,"#FFC94A")),
+  cloud: c => cloudShapes(hexOr(c,"#FFFFFF")),
+  rainbow: () => rainbowShapes(),
+  star: c => [starPoly(50,50,30,hexOr(c,"#FFD24D"))],
+  moon: c => moonShapes(hexOr(c,"#F2E9B0")),
+  tree: c => treeShapes(hexOr(c,"#4CAF6B")),
+  flower: c => flowerShapes(hexOr(c,"#E8578A")),
+  mushroom: c => mushroomShapes(hexOr(c,"#E8544A")),
+  mountain: c => mountainShapes(hexOr(c,"#8D97A5")),
+  raincloud: c => raincloudShapes(hexOr(c,"#8D97A5")),
+  lightning: c => lightningShapes(hexOr(c,"#F2C94C")),
+  snowman: () => snowmanShapes(),
+
+  house: c => houseShapes(hexOr(c,"#E8544A")),
+  castle: c => castleShapes(hexOr(c,"#C9CCD6")),
+  trafficlight: () => trafficlightShapes(),
+  flag: c => flagShapes(hexOr(c,"#E8544A")),
+  clock: c => clockShapes(hexOr(c,"#FFFFFF")),
+  balloon: c => balloonShapes(hexOr(c,"#E8544A")),
+  ball: c => ballShapes(hexOr(c,"#E8544A")),
+  heart: c => heartShapes(hexOr(c,"#E8546A")),
+  robot: c => robotShapes(hexOr(c,"#8D97A5")),
+  person: c => personShapes(hexOr(c,"#F6C28B")),
+  ghost: () => ghostShapes()
+};
+
+/* ============================================================
    5. ПЕРЕРИСОВКА / ИСТОРИЯ
    ============================================================ */
 function redrawAll(changedIds = new Set()){
@@ -292,6 +1186,11 @@ function redrawAll(changedIds = new Set()){
   updateButtons();
 }
 function updateButtons(){
+  if(settings.mode === "image"){
+    $("btnUndo").disabled = busy || aiIndex <= 0;
+    $("btnNew").disabled = busy || aiIndex < 0;
+    return;
+  }
   $("btnUndo").disabled = busy || undoStack.length === 0;
   $("btnNew").disabled = busy || scene.length === 0;
 }
@@ -299,15 +1198,40 @@ function pushHistory(snapshot){
   undoStack.push(snapshot);
   if(undoStack.length > 60) undoStack.shift();
 }
+function showAiImage(dataUrl){
+  aiImages.push(dataUrl);
+  aiIndex = aiImages.length - 1;
+  aiPicEl.src = dataUrl;
+  applyModeVisibility();
+  updateButtons();
+}
 function doUndo(){
   if(busy) return;
+  if(settings.mode === "image"){
+    if(aiIndex <= 0){ setStatus("Нечего отменять"); return; }
+    aiIndex--;
+    aiPicEl.src = aiImages[aiIndex];
+    applyModeVisibility();
+    updateButtons();
+    setStatus("Отменил");
+    return;
+  }
   if(undoStack.length === 0){ setStatus("Нечего отменять"); return; }
   scene = undoStack.pop();
   redrawAll();
   setStatus("Отменил");
 }
 function doNew(){
-  if(busy || scene.length === 0) return;
+  if(busy) return;
+  if(settings.mode === "image"){
+    if(aiIndex < 0) return;
+    aiImages = []; aiIndex = -1; aiPicEl.src = "";
+    applyModeVisibility();
+    updateButtons();
+    setStatus("Новый лист");
+    return;
+  }
+  if(scene.length === 0) return;
   pushHistory(clone(scene));
   scene = [];
   redrawAll();
@@ -325,6 +1249,24 @@ function clampBox(b){
   const x = Math.max(0, Math.min(W - w, Number(b && b.x) || 0));
   const y = Math.max(0, Math.min(H - h, Number(b && b.y) || 0));
   return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+const MIN_GAP = 24; // модель часто кладёт новый объект поверх старых, не читая сцену — разводим их руками
+function boxesTooClose(a, b, gap){
+  return !(a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x ||
+           a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y);
+}
+function findFreeBox(box, others){
+  if(!others.length || !others.some(o => boxesTooClose(box, o.box, MIN_GAP))) return box;
+  const stepsX = [0, 50, 100, 150, 200, 260, 320, 380, -50, -100, -150, -200, -260, -320, -380];
+  const stepsY = [0, 50, 100, 150, 200, -50, -100, -150, -200];
+  for(const dy of stepsY){
+    for(const dx of stepsX){
+      const cand = { x: box.x + dx, y: box.y + dy, w: box.w, h: box.h };
+      if(cand.x < 0 || cand.y < 0 || cand.x + cand.w > W || cand.y + cand.h > H) continue;
+      if(!others.some(o => boxesTooClose(cand, o.box, MIN_GAP))) return cand;
+    }
+  }
+  return box; // некуда поставить без наложения — рисуем как просила модель
 }
 function uniqueId(id){
   let base = String(id || "").replace(/[^\w\-]/g, "") || ("obj" + (++idCounter));
@@ -352,10 +1294,12 @@ function applyOps(ops){
     try{
       switch(op.op){
         case "add": {
-          if(!Array.isArray(op.shapes) || op.shapes.length === 0) break;
+          const tpl = String(op.template || "");
+          if(!TEMPLATES[tpl]) break;
           const id = uniqueId(op.id);
-          scene.push({ id, label: String(op.label || ""), box: clampBox(op.box || {}),
-                       shapes: op.shapes.slice(0, 40), seed: newSeed() });
+          const box = findFreeBox(clampBox(op.box || {}), scene);
+          const color = typeof op.color === "string" ? op.color : undefined;
+          scene.push({ id, label: String(op.label || ""), box, template: tpl, color, seed: newSeed() });
           changedIds.add(id);
           break;
         }
@@ -363,7 +1307,7 @@ function applyOps(ops){
           const item = scene.find(o => o.id === op.id);
           if(!item) break;
           if(op.box) item.box = clampBox(op.box);
-          if(Array.isArray(op.shapes) && op.shapes.length) item.shapes = op.shapes.slice(0, 40);
+          if(typeof op.color === "string") item.color = op.color;
           if(typeof op.label === "string" && op.label) item.label = op.label;
           changedIds.add(item.id);
           break;
@@ -387,13 +1331,11 @@ function applyOps(ops){
 /* ============================================================
    7. ПРОМПТ
    ============================================================ */
-function roundShapes(shapes){
-  return JSON.parse(JSON.stringify(shapes, (k, v) => typeof v === "number" ? Math.round(v * 10) / 10 : v));
-}
 function buildPrompt(childPhrase){
-  const sceneJson = scene.map(o => ({ id: o.id, label: o.label, box: o.box, shapes: roundShapes(o.shapes) }));
+  const sceneJson = scene.map(o => ({ id: o.id, label: o.label, box: o.box, template: o.template, color: o.color }));
   const phrase = childPhrase.replace(/["\\]/g, "'");
-  return `Ты — помощник детской рисовалки. Ребёнок говорит по-русски, а ты превращаешь это в простые рисунки в стиле детского рисунка карандашом/фломастером (НЕ фотореализм).
+  const catalog = Object.entries(TEMPLATE_INFO).map(([id, ru]) => `${id} — ${ru}`).join("; ");
+  return `Ты — помощник детской рисовалки. Ребёнок говорит по-русски. Рисунок всегда собирается из готовых шаблонов: ты НЕ изобретаешь фигуры сам (это плохо получается даже у сильных моделей), а выбираешь id шаблона и параметры — геометрию достраивает код, поэтому рисунок всегда узнаваем.
 
 ТЕКУЩАЯ СЦЕНА (JSON): ${JSON.stringify(sceneJson)}
 
@@ -403,32 +1345,28 @@ function buildPrompt(childPhrase){
 {"say":"короткий ответ по-русски, до 8 слов","ops":[...]}
 
 ops:
-- {"op":"add","id":"...","label":"...","box":{"x":..,"y":..,"w":..,"h":..},"shapes":[...]}
-- {"op":"update","id":"...","box":{...},"shapes":[...],"label":"..."}  (любые из полей; чтобы перекрасить — пришли полный новый список shapes, сохранив форму)
+- {"op":"add","id":"...","label":"...","template":"<id из списка ниже>","color":"#hex (необязательно)","box":{"x":..,"y":..,"w":..,"h":..}}
+- {"op":"update","id":"...","box":{...},"color":"#hex","label":"..."}  (любые из полей; шаблон у объекта сменить нельзя — если зверь не тот, сначала remove, потом add заново)
 - {"op":"remove","id":"..."}
 - {"op":"clear"}
 - {"op":"undo"}
 
-ФИГУРЫ рисуются в ЛОКАЛЬНОМ квадрате 0..100 по обеим осям; квадрат равномерно масштабируется и центрируется в box, поэтому пропорции box подбирай под объект.
-{"t":"circle","cx":50,"cy":50,"r":20}
-{"t":"ellipse","cx":50,"cy":50,"rx":30,"ry":15}
-{"t":"rect","x":10,"y":10,"w":30,"h":20}
-{"t":"line","x1":0,"y1":0,"x2":10,"y2":10}
-{"t":"poly","p":[[10,10],[50,0],[90,10]]}
-{"t":"path","d":"M10 50 Q50 10 90 50"}
-Необязательные поля: "fill" (hex или "none"), "stroke" (hex, по умолчанию #2A2D3A). Все числа — в координатах 0..100.
+СПИСОК ШАБЛОНОВ (id — что это; "template" обязан быть РОВНО одним из этих id, выбирай по смыслу даже если ребёнок сказал иначе, например «котёнок»→cat, «щенок»→dog, «воробушек»→bird):
+${catalog}
 
 ПРАВИЛА:
-- Стиль детского рисунка: 3–15 фигур на объект, яркие цвета, узнаваемый силуэт, улыбающиеся мордочки у животных, людей и солнца.
-- Холст 1000×700, начало координат слева сверху, y растёт вниз. Низ стоящих на земле предметов около y=620. Небесные объекты (солнце, облака, птицы, радуга) — в верхней части.
-- Если ребёнок назвал цвет — это цвет основного тела объекта.
-- «рядом / справа / слева / сверху / над / под» — относительно существующих объектов; не перекрывай объекты без просьбы. Box не должен выходить за холст.
-- Размеры объектов 150–320 px, пропорции между объектами разумные (мышка меньше собаки, дом больше кошки).
-- Фигуры от заднего плана к переднему (тело → голова → глаза/нос/рот). Глаза — маленькие тёмные закрашенные кружки, рот — дуга path с fill "none".
-- «больше/меньше/передвинь» → update box; «перекрась» → update shapes; «убери X» → remove; «отмени/назад» → undo; «сотри всё/новый лист» → clear.
+- "template" — обязательно существующий id из списка выше, никаких других значений. Если ничего подходящего нет — не добавляй ops вообще, вежливо объясни в "say" и предложи похожее из списка.
+- "color" — hex, только если ребёнок явно назвал цвет; если цвет не назван — вообще не присылай поле color (шаблон сам возьмёт красивый цвет по умолчанию).
+- Холст 1000×700, начало координат слева сверху, y растёт вниз. Низ стоящих на земле предметов около y=620. Небесные/летающие шаблоны (sun, cloud, rainbow, star, moon, bird, owl, parrot, plane, helicopter, rocket, lightning) — в верхней части, y небольшой.
+- «рядом / справа / слева / сверху / над / под» — относительно существующих объектов из сцены; старайся не перекрывать объекты без явной просьбы (если ошибёшься — код сам раздвинет объекты).
+- Размер box 150–320 по большей стороне, пропорции между объектами разумные (mouse меньше dog, house больше cat). Box не должен выходить за холст.
+- «больше/меньше/передвинь» → update box; «перекрась» → update color; «убери X» → remove; «отмени/назад» → undo; «сотри всё/новый лист» → clear.
 - Несколько предметов в одной фразе → несколько add.
-- Непонятно или нельзя нарисовать → без ops, мягко переспроси в "say".
-- Страшное или недетское → нарисуй что-то доброе и мягко скажи об этом.`;
+- Непонятно, нельзя нарисовать или нет похожего шаблона → без ops, мягко переспроси в "say".
+- Страшное или недетское → нарисуй что-то доброе из списка и мягко скажи об этом.
+
+Пример: ребёнок сказал «рыжая кошечка» →
+{"say":"Вот рыжая кошечка!","ops":[{"op":"add","id":"cat1","label":"кошка","template":"cat","color":"#E8702A","box":{"x":400,"y":380,"w":220,"h":190}}]}`;
 }
 
 /* ============================================================
@@ -451,6 +1389,23 @@ async function callModel(prompt){
   if(!data || typeof data.text !== "string" || !data.text) throw makeError(502, "empty");
   return data.text;
 }
+async function callModelImage(prompt){
+  let res;
+  try{
+    res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-App-Password": settings.password || "" },
+      body: JSON.stringify({ prompt, model: settings.model || undefined, mode: "image" })
+    });
+  }catch(e){
+    throw makeError(0, "offline");
+  }
+  let data = null;
+  try{ data = await res.json(); }catch(e){}
+  if(!res.ok) throw makeError(res.status, data && data.error, data && data.detail);
+  if(!data || typeof data.image !== "string" || !data.image) throw makeError(502, "empty");
+  return data.image;
+}
 function makeError(status, code, detail){
   const e = new Error(code || ("HTTP " + status));
   e.status = status; e.code = code || ""; e.detail = detail || "";
@@ -466,6 +1421,7 @@ function humanError(err){
   if(s === 404) return "Не найден сервер рисовалки. Открой страницу по ссылке Vercel, а не как файл";
   if(s === 429 || c === "rate_limited") return "Слишком быстро, подожди немножко";
   if(c === "empty") return "GigaChat ответил пусто. Попробуй ещё раз";
+  if(c === "no_image") return "GigaChat не стал рисовать картинку, а просто ответил текстом. Попробуй сформулировать иначе";
   if(s === 504 || c === "timeout") return "GigaChat думал слишком долго. Попробуй ещё раз";
   if(s >= 500) return "Сервер GigaChat устал. Попробуй ещё раз";
   return "Ошибка: " + (err.message || "неизвестно");
@@ -474,13 +1430,32 @@ function humanError(err){
 /* ============================================================
    9. ПАРСИНГ ОТВЕТА
    ============================================================ */
+function extractBalancedJson(t){
+  const start = t.indexOf("{");
+  if(start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for(let i = start; i < t.length; i++){
+    const c = t[i];
+    if(inStr){
+      if(esc) esc = false;
+      else if(c === "\\") esc = true;
+      else if(c === '"') inStr = false;
+      continue;
+    }
+    if(c === '"') inStr = true;
+    else if(c === "{") depth++;
+    else if(c === "}"){ depth--; if(depth === 0) return t.slice(start, i + 1); }
+  }
+  return null;
+}
 function stripJsonFence(text){
   let t = String(text).trim();
   const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   if(fence) t = fence[1].trim();
-  const a = t.indexOf("{"), b = t.lastIndexOf("}");
-  if(a >= 0 && b > a) t = t.slice(a, b + 1);
-  return t;
+  // GigaChat иногда добавляет мусор после JSON (лишнюю скобку, пояснение) —
+  // lastIndexOf("}") в таких случаях хватает чужой хвост, поэтому ищем
+  // именно сбалансированный по глубине объект от первой "{".
+  return extractBalancedJson(t) || t;
 }
 function parseModelResponse(text){
   const clean = stripJsonFence(text);
@@ -507,6 +1482,40 @@ if("speechSynthesis" in window) speechSynthesis.getVoices();
 /* ============================================================
    11. ОСНОВНОЙ ЦИКЛ: фраза → модель → сцена
    ============================================================ */
+async function handleTemplateRequest(phrase){
+  const raw = await callModel(buildPrompt(phrase));
+  const parsed = parseModelResponse(raw);
+  if(!parsed){
+    setStatus("Не поняла ответ, скажи ещё раз", true);
+    return;
+  }
+  const say = String(parsed.say || "").slice(0, 200);
+  const ops = Array.isArray(parsed.ops) ? parsed.ops : [];
+  // модель иногда выдумывает несуществующий template вместо честного отказа —
+  // такой add молча не рисуется; если из-за этого вообще ничего не изменилось,
+  // "say" модели ("Нарисовал дракона!") было бы враньём, не доверяем ему
+  const hadUnknownTemplate = ops.some(o => o && o.op === "add" && !TEMPLATES[String(o.template || "")]);
+  const addedSounds = ops
+    .filter(o => o && o.op === "add" && TEMPLATES[String(o.template || "")])
+    .map(o => TEMPLATE_SOUND[o.template])
+    .filter(Boolean);
+  busy = false;               // чтобы applyOps/кнопки обновились корректно
+  const changed = ops.length ? applyOps(ops) : false;
+  if(hadUnknownTemplate && !changed) setStatus("Такого я ещё не умею рисовать, попроси другого зверя или предмет", true);
+  else if(say){
+    setStatus(say);
+    speak(addedSounds.length ? say + " " + addedSounds.join(" ") : say);
+  }
+  else setStatus("Готово");
+}
+
+async function handleImageRequest(phrase){
+  const dataUrl = await callModelImage(phrase);
+  showAiImage(dataUrl);
+  setStatus("Готово!");
+  speak("Готово!");
+}
+
 async function handlePhrase(phrase){
   if(busy) return;
   phrase = String(phrase || "").trim();
@@ -519,18 +1528,8 @@ async function handlePhrase(phrase){
   clearBigError();
 
   try{
-    const raw = await callModel(buildPrompt(phrase));
-    const parsed = parseModelResponse(raw);
-    if(!parsed){
-      setStatus("Не поняла ответ, скажи ещё раз", true);
-      return;
-    }
-    const say = String(parsed.say || "").slice(0, 200);
-    const ops = Array.isArray(parsed.ops) ? parsed.ops : [];
-    busy = false;               // чтобы applyOps/кнопки обновились корректно
-    if(ops.length) applyOps(ops);
-    if(say){ setStatus(say); speak(say); }
-    else setStatus("Готово");
+    if(settings.mode === "image") await handleImageRequest(phrase);
+    else await handleTemplateRequest(phrase);
   }catch(err){
     console.error(err, err.detail);
     const msg = humanError(err);
