@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Рисовалка — что нарисуем?</title>
+<style>
+  :root{
+    --ink:#2A2D3A; --accent:#ff6b6b; --bg:#f3f4f8;
+    --panel:#fff; --shadow:0 6px 24px rgba(30,30,60,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);overflow:hidden}
+  #app{position:fixed;inset:0;display:flex;flex-direction:column}
+  #topbar{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;gap:8px;align-items:center;padding:10px 12px;pointer-events:none}
+  #topbar > *{pointer-events:auto}
+  .tbtn{background:var(--panel);border:1px solid rgba(0,0,0,.06);border-radius:14px;padding:10px 14px;font-size:15px;font-weight:600;color:var(--ink);box-shadow:var(--shadow);cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none;transition:transform .08s,background .15s}
+  .tbtn:active{transform:scale(.95)} .tbtn:hover{background:#fafbff}
+  .tbtn.ghost{background:rgba(255,255,255,.85);backdrop-filter:blur(6px)}
+  #title{margin-left:auto;font-size:14px;opacity:.55;font-weight:600;padding-right:4px}
+  #stage{flex:1;position:relative;background:#fff}
+  #paper{width:100%;height:100%;display:block;touch-action:none}
+  #hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(24px,5vw,52px);font-weight:800;color:#e7e9f2;pointer-events:none;user-select:none;letter-spacing:1px;transition:opacity .4s}
+  #hint.hidden{opacity:0}
+  #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:20;display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px 12px calc(14px + env(safe-area-inset-bottom)) 12px;pointer-events:none}
+  #bottombar > *{pointer-events:auto}
+  #status{min-height:22px;font-size:14px;color:#5a5f74;background:rgba(255,255,255,.9);padding:4px 12px;border-radius:999px;backdrop-filter:blur(6px);box-shadow:var(--shadow);max-width:min(92vw,720px);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transition:opacity .25s}
+  #status.show{opacity:1} #status.err{background:#ffe3e3;color:#b00020;font-weight:700}
+  #controls{display:flex;align-items:center;gap:14px}
+  #mic{width:84px;height:84px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(160deg,#ff8a8a,#ff5b5b);color:#fff;font-size:36px;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 26px rgba(255,80,80,.35);transition:transform .12s,background .2s;position:relative}
+  #mic:hover{transform:translateY(-2px)} #mic:active{transform:scale(.94)}
+  #mic.listening{background:linear-gradient(160deg,#7ad3ff,#3aa6ff);box-shadow:0 8px 30px rgba(60,150,255,.45)}
+  #mic.thinking{background:linear-gradient(160deg,#ffe07a,#ffc63a);box-shadow:0 8px 30px rgba(255,190,60,.5);animation:wiggle 1s ease-in-out infinite}
+  @keyframes wiggle{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+  #mic .ring{position:absolute;inset:-6px;border-radius:50%;border:3px solid rgba(60,150,255,.7);opacity:0}
+  #mic.listening .ring{animation:pulse 1.4s ease-out infinite}
+  @keyframes pulse{0%{transform:scale(.9);opacity:.9}100%{transform:scale(1.35);opacity:0}}
+  .sidebtn{background:var(--panel);border:1px solid rgba(0,0,0,.06);border-radius:14px;padding:12px 14px;font-size:15px;font-weight:600;color:var(--ink);box-shadow:var(--shadow);cursor:pointer;display:inline-flex;align-items:center;gap:8px;user-select:none}
+  .sidebtn:active{transform:scale(.96)}
+  #typewrap{display:none;width:min(92vw,640px);background:var(--panel);border-radius:18px;box-shadow:var(--shadow);padding:8px;gap:8px;align-items:center}
+  #typewrap.show{display:flex}
+  #typewrap input{flex:1;border:none;outline:none;font-size:16px;padding:10px 12px;background:transparent;color:var(--ink)}
+  #typewrap button{border:none;background:var(--accent);color:#fff;font-weight:700;border-radius:12px;padding:10px 16px;cursor:pointer;font-size:15px}
+  .modal{position:fixed;inset:0;background:rgba(20,22,40,.45);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+  .modal.show{display:flex}
+  .card{background:var(--panel);border-radius:22px;box-shadow:var(--shadow);width:min(94vw,520px);padding:22px;max-height:92vh;overflow:auto}
+  .card h2{margin:0 0 6px;font-size:22px}
+  .card p{margin:6px 0 14px;color:#5a5f74;font-size:14px;line-height:1.45}
+  .card label{display:block;font-size:13px;font-weight:700;margin:14px 0 6px;color:#3a3f54}
+  .card input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #dfe2ec;font-size:15px;background:#fafbff;color:var(--ink);outline:none}
+  .card input:focus{border-color:var(--accent)}
+  .card .row{display:flex;gap:10px;margin-top:18px}
+  .card .row button{flex:1;border:none;border-radius:14px;padding:14px;font-size:16px;font-weight:700;cursor:pointer}
+  .btn-primary{background:var(--accent);color:#fff} .btn-ghost{background:#eef0f7;color:var(--ink)}
+  .link{color:#3aa6ff;font-size:13px;text-decoration:none} .link:hover{text-decoration:underline}
+  .note{font-size:12px;color:#8a90a6;margin-top:10px;line-height:1.4}
+  #bigerr{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:3px solid #ff5b5b;border-radius:18px;padding:18px 22px;font-size:18px;font-weight:700;color:#b00020;box-shadow:0 12px 40px rgba(0,0,0,.2);display:none;z-index:40;max-width:90vw;text-align:center}
+  #bigerr.show{display:block}
+  @media (prefers-reduced-motion: reduce){ #mic.thinking{animation:none} #mic.listening .ring{animation:none;opacity:.6;transform:scale(1.15)} #status{transition:none} }
+  @media (max-width:520px){ #mic{width:72px;height:72px;font-size:30px} .tbtn{padding:9px 11px;font-size:14px} .sidebtn{padding:10px 11px;font-size:14px} #title{display:none} }
+
+  .pop{animation:pop .35s cubic-bezier(.3,1.6,.5,1) both;transform-box:fill-box;transform-origin:center}
+  @keyframes pop{from{opacity:0;transform:scale(.4)}to{opacity:1;transform:scale(1)}}
+  .tbtn:disabled{opacity:.45;cursor:default;transform:none}
+  @media (prefers-reduced-motion: reduce){ .pop{animation:none} }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <button class="tbtn ghost" id="btnUndo" disabled>↶ Назад</button>
+    <button class="tbtn ghost" id="btnNew" disabled>🆕 Новый лист</button>
+    <button class="tbtn ghost" id="btnSettings" aria-label="Настройки">⚙</button>
+    <span id="title">Рисовалка</span>
+  </div>
+
+  <div id="stage">
+    <svg id="paper" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet" aria-label="Рисунок"></svg>
+    <div id="hint">Что нарисуем?</div>
+    <div id="bigerr" role="alert"></div>
+  </div>
+
+  <div id="bottombar">
+    <div id="status" aria-live="polite"></div>
+    <div id="typewrap">
+      <input id="typeinput" type="text" placeholder="Напиши словами…" autocomplete="off">
+      <button id="typesend">Нарисовать</button>
+    </div>
+    <div id="controls">
+      <button class="sidebtn" id="btnType">⌨ Словами</button>
+      <button id="mic" title="Нажми и говори (или пробел)" aria-label="Говорить"><span class="ring"></span><span id="micicon">🎤</span></button>
+    </div>
+  </div>
+
+  <div class="modal" id="settingsModal">
+    <div class="card">
+      <h2>⚙ Настройки</h2>
+      <p>Ключ GigaChat хранится на сервере, в браузер он не попадает.</p>
+      <label for="password">Пароль рисовалки</label>
+      <input id="password" type="password" placeholder="Если задан на сервере (APP_PASSWORD)" autocomplete="off">
+      <label for="model">Модель</label>
+      <input id="model" type="text" placeholder="GigaChat">
+      <div class="note">
+        Пароль нужен, чтобы чужие люди по вашей ссылке не тратили ваши токены GigaChat.
+        Он хранится только в этом браузере. Модель можно оставить пустой — тогда используется модель по умолчанию с сервера.
+      </div>
+      <div class="row">
+        <button class="btn-ghost" id="settingsCancel">Отмена</button>
+        <button class="btn-primary" id="settingsSave">Сохранить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+<script>
+/* ============================================================
+   1. СОСТОЯНИЕ
+   ============================================================ */
+const SVG_NS = "http://www.w3.org/2000/svg";
+const W = 1000, H = 700;
+const API_URL = "/api/gigachat";
+
+let scene = [];      // {id,label,box:{x,y,w,h},shapes:[],seed}
+let undoStack = [];
+let idCounter = 0;
+let busy = false;
+
+const $ = id => document.getElementById(id);
+const paper = $("paper"), hintEl = $("hint"), statusEl = $("status"), bigerrEl = $("bigerr");
+const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ============================================================
+   2. НАСТРОЙКИ
+   ============================================================ */
+const LS_KEY = "drawer_settings_gigachat_v2";
+let settings = { password: "", model: "" };
+function loadSettings(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw){ const s = JSON.parse(raw); if(s && typeof s === "object") Object.assign(settings, s); }
+  }catch(e){}
+}
+function saveSettings(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(settings)); }catch(e){} }
+loadSettings();
+
+function openSettings(){
+  $("password").value = settings.password || "";
+  $("model").value = settings.model || "";
+  $("settingsModal").classList.add("show");
+  setTimeout(() => $("password").focus(), 50);
+}
+function closeSettings(){ $("settingsModal").classList.remove("show"); }
+$("btnSettings").onclick = openSettings;
+$("settingsCancel").onclick = closeSettings;
+$("settingsSave").onclick = () => {
+  settings.password = $("password").value.trim();
+  settings.model = $("model").value.trim();
+  saveSettings(); closeSettings(); setStatus("Сохранено");
+};
+$("settingsModal").addEventListener("click", e => { if(e.target.id === "settingsModal") closeSettings(); });
+const isModalOpen = () => $("settingsModal").classList.contains("show");
+
+/* ============================================================
+   3. СТАТУСЫ
+   ============================================================ */
+let statusTimer = null;
+function setStatus(text, isError = false, sticky = false){
+  clearTimeout(statusTimer);
+  statusEl.textContent = text || "";
+  statusEl.classList.toggle("err", !!isError);
+  statusEl.classList.toggle("show", !!text);
+  if(text && !sticky) statusTimer = setTimeout(() => statusEl.classList.remove("show"), 4000);
+}
+function showBigError(text){
+  bigerrEl.textContent = text;
+  bigerrEl.classList.add("show");
+  clearTimeout(showBigError._t);
+  showBigError._t = setTimeout(() => bigerrEl.classList.remove("show"), 6000);
+}
+function clearBigError(){ bigerrEl.classList.remove("show"); }
+
+/* ============================================================
+   4. ОТРИСОВКА (Rough.js)
+   Каждый объект — группа с transform: фигуры рисуются в локальных
+   координатах 0..100, а толщина линий не масштабируется.
+   ============================================================ */
+const num = v => (typeof v === "number" ? v : parseFloat(v));
+const ok = (...v) => v.every(x => Number.isFinite(x));
+
+function renderObject(item, animate){
+  const { box, shapes, seed, id } = item;
+  const s = Math.min(box.w, box.h) / 100;
+  const tx = box.x + (box.w - 100 * s) / 2;
+  const ty = box.y + (box.h - 100 * s) / 2;
+
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("data-id", id);
+  g.setAttribute("transform", `translate(${tx} ${ty}) scale(${s})`);
+  const rc = rough.svg(paper);
+
+  (shapes || []).forEach((sh, i) => {
+    const piece = document.createElementNS(SVG_NS, "g");
+    try{ drawShape(rc, piece, sh, s, seed + i * 7); }
+    catch(e){ console.warn("shape error", e, sh); }
+    if(animate && !prefersReduced){
+      piece.classList.add("pop");
+      piece.style.animationDelay = (i * 80) + "ms";
+    }
+    g.appendChild(piece);
+  });
+  g.querySelectorAll("path").forEach(p => p.setAttribute("vector-effect", "non-scaling-stroke"));
+  paper.appendChild(g);
+}
+
+function drawShape(rc, into, sh, s, seed){
+  if(!sh || typeof sh !== "object") return;
+  const fill = sh.fill && sh.fill !== "none" ? String(sh.fill) : null;
+  const stroke = sh.stroke ? String(sh.stroke) : "#2A2D3A";
+  const small = shapeSize(sh) * s < 20;   // мелочь: глаза, нос, пуговицы
+  const base = {
+    seed, stroke,
+    strokeWidth: small ? 2 : 3,
+    roughness: small ? 0.6 : 1.3,
+    bowing: 1.2,
+    maxRandomnessOffset: 2.2 / s,       // ~2 px дрожания на экране
+    disableMultiStroke: small
+  };
+
+  if(fill && sh.t !== "line"){
+    if(small){
+      add(into, make(rc, sh, { ...base, fill, fillStyle: "solid" }));
+      return;
+    }
+    // мягкая подложка + штриховка «карандашом» сверху
+    const under = make(rc, sh, { ...base, fill, fillStyle: "solid", stroke: "none", roughness: 0.8 });
+    if(under){ under.setAttribute("opacity", "0.45"); into.appendChild(under); }
+    add(into, make(rc, sh, {
+      ...base, fill, fillStyle: "hachure", fillWeight: 2,
+      hachureGap: 7 / s,
+      hachureAngle: -41 + (seed % 20) - 10   // стабильно от seed, без «дрожания» при перерисовке
+    }));
+  }else{
+    add(into, make(rc, sh, base));
+  }
+}
+function add(into, el){ if(el) into.appendChild(el); }
+
+function make(rc, sh, o){
+  switch(sh.t){
+    case "circle": {
+      const cx = num(sh.cx), cy = num(sh.cy), r = num(sh.r);
+      return ok(cx, cy, r) && r > 0 ? rc.circle(cx, cy, 2 * r, o) : null;
+    }
+    case "ellipse": {
+      const cx = num(sh.cx), cy = num(sh.cy), rx = num(sh.rx), ry = num(sh.ry);
+      return ok(cx, cy, rx, ry) && rx > 0 && ry > 0 ? rc.ellipse(cx, cy, 2 * rx, 2 * ry, o) : null;
+    }
+    case "rect": {
+      const x = num(sh.x), y = num(sh.y), w = num(sh.w), h = num(sh.h);
+      return ok(x, y, w, h) ? rc.rectangle(x, y, w, h, o) : null;
+    }
+    case "line": {
+      const a = num(sh.x1), b = num(sh.y1), c = num(sh.x2), d = num(sh.y2);
+      return ok(a, b, c, d) ? rc.line(a, b, c, d, o) : null;
+    }
+    case "poly": {
+      if(!Array.isArray(sh.p)) return null;
+      const pts = sh.p.map(q => [num(q && q[0]), num(q && q[1])]).filter(q => ok(q[0], q[1]));
+      return pts.length > 1 ? rc.polygon(pts, o) : null;
+    }
+    case "path":
+      return typeof sh.d === "string" && sh.d.length < 4000 ? rc.path(sh.d, o) : null;
+  }
+  return null;
+}
+
+function shapeSize(sh){
+  if(sh.t === "circle") return 2 * (num(sh.r) || 0);
+  if(sh.t === "ellipse") return 2 * Math.min(num(sh.rx) || 0, num(sh.ry) || 0);
+  if(sh.t === "rect") return Math.min(num(sh.w) || 0, num(sh.h) || 0);
+  return 100;
+}
+
+/* ============================================================
+   5. ПЕРЕРИСОВКА / ИСТОРИЯ
+   ============================================================ */
+function redrawAll(changedIds = new Set()){
+  while(paper.firstChild) paper.removeChild(paper.firstChild);
+  hintEl.classList.toggle("hidden", scene.length > 0);
+  scene.forEach(item => renderObject(item, changedIds.has(item.id)));
+  updateButtons();
+}
+function updateButtons(){
+  $("btnUndo").disabled = busy || undoStack.length === 0;
+  $("btnNew").disabled = busy || scene.length === 0;
+}
+function pushHistory(snapshot){
+  undoStack.push(snapshot);
+  if(undoStack.length > 60) undoStack.shift();
+}
+function doUndo(){
+  if(busy) return;
+  if(undoStack.length === 0){ setStatus("Нечего отменять"); return; }
+  scene = undoStack.pop();
+  redrawAll();
+  setStatus("Отменил");
+}
+function doNew(){
+  if(busy || scene.length === 0) return;
+  pushHistory(clone(scene));
+  scene = [];
+  redrawAll();
+  setStatus("Новый лист");
+}
+$("btnUndo").onclick = doUndo;
+$("btnNew").onclick = doNew;
+
+/* ============================================================
+   6. OPS
+   ============================================================ */
+function clampBox(b){
+  const w = Math.max(20, Math.min(W, Number(b && b.w) || 150));
+  const h = Math.max(20, Math.min(H, Number(b && b.h) || 150));
+  const x = Math.max(0, Math.min(W - w, Number(b && b.x) || 0));
+  const y = Math.max(0, Math.min(H - h, Number(b && b.y) || 0));
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+}
+function uniqueId(id){
+  let base = String(id || "").replace(/[^\w\-]/g, "") || ("obj" + (++idCounter));
+  let candidate = base, n = 1;
+  while(scene.some(o => o.id === candidate)) candidate = base + "_" + (n++);
+  return candidate;
+}
+const newSeed = () => 1 + Math.floor(Math.random() * 100000);
+
+function applyOps(ops){
+  if(!Array.isArray(ops) || ops.length === 0) return false;
+  const before = clone(scene);
+  const beforeStr = JSON.stringify(scene);
+  const changedIds = new Set();
+
+  if(ops.some(o => o && o.op === "undo")){
+    if(!undoStack.length) return false;
+    scene = undoStack.pop();
+    redrawAll();
+    return true;
+  }
+
+  for(const op of ops){
+    if(!op || typeof op !== "object") continue;
+    try{
+      switch(op.op){
+        case "add": {
+          if(!Array.isArray(op.shapes) || op.shapes.length === 0) break;
+          const id = uniqueId(op.id);
+          scene.push({ id, label: String(op.label || ""), box: clampBox(op.box || {}),
+                       shapes: op.shapes.slice(0, 40), seed: newSeed() });
+          changedIds.add(id);
+          break;
+        }
+        case "update": {
+          const item = scene.find(o => o.id === op.id);
+          if(!item) break;
+          if(op.box) item.box = clampBox(op.box);
+          if(Array.isArray(op.shapes) && op.shapes.length) item.shapes = op.shapes.slice(0, 40);
+          if(typeof op.label === "string" && op.label) item.label = op.label;
+          changedIds.add(item.id);
+          break;
+        }
+        case "remove": {
+          const idx = scene.findIndex(o => o.id === op.id);
+          if(idx >= 0) scene.splice(idx, 1);
+          break;
+        }
+        case "clear": scene = []; break;
+      }
+    }catch(e){ console.warn("op error", e, op); }
+  }
+
+  if(JSON.stringify(scene) === beforeStr) return false;
+  pushHistory(before);
+  redrawAll(changedIds);
+  return true;
+}
+
+/* ============================================================
+   7. ПРОМПТ
+   ============================================================ */
+function roundShapes(shapes){
+  return JSON.parse(JSON.stringify(shapes, (k, v) => typeof v === "number" ? Math.round(v * 10) / 10 : v));
+}
+function buildPrompt(childPhrase){
+  const sceneJson = scene.map(o => ({ id: o.id, label: o.label, box: o.box, shapes: roundShapes(o.shapes) }));
+  const phrase = childPhrase.replace(/["\\]/g, "'");
+  return `Ты — помощник детской рисовалки. Ребёнок говорит по-русски, а ты превращаешь это в простые рисунки в стиле детского рисунка карандашом/фломастером (НЕ фотореализм).
+
+ТЕКУЩАЯ СЦЕНА (JSON): ${JSON.stringify(sceneJson)}
+
+ФРАЗА РЕБЁНКА: "${phrase}"
+
+Отвечай СТРОГО валидным JSON без пояснений и без markdown-обёртки:
+{"say":"короткий ответ по-русски, до 8 слов","ops":[...]}
+
+ops:
+- {"op":"add","id":"...","label":"...","box":{"x":..,"y":..,"w":..,"h":..},"shapes":[...]}
+- {"op":"update","id":"...","box":{...},"shapes":[...],"label":"..."}  (любые из полей; чтобы перекрасить — пришли полный новый список shapes, сохранив форму)
+- {"op":"remove","id":"..."}
+- {"op":"clear"}
+- {"op":"undo"}
+
+ФИГУРЫ рисуются в ЛОКАЛЬНОМ квадрате 0..100 по обеим осям; квадрат равномерно масштабируется и центрируется в box, поэтому пропорции box подбирай под объект.
+{"t":"circle","cx":50,"cy":50,"r":20}
+{"t":"ellipse","cx":50,"cy":50,"rx":30,"ry":15}
+{"t":"rect","x":10,"y":10,"w":30,"h":20}
+{"t":"line","x1":0,"y1":0,"x2":10,"y2":10}
+{"t":"poly","p":[[10,10],[50,0],[90,10]]}
+{"t":"path","d":"M10 50 Q50 10 90 50"}
+Необязательные поля: "fill" (hex или "none"), "stroke" (hex, по умолчанию #2A2D3A). Все числа — в координатах 0..100.
+
+ПРАВИЛА:
+- Стиль детского рисунка: 3–15 фигур на объект, яркие цвета, узнаваемый силуэт, улыбающиеся мордочки у животных, людей и солнца.
+- Холст 1000×700, начало координат слева сверху, y растёт вниз. Низ стоящих на земле предметов около y=620. Небесные объекты (солнце, облака, птицы, радуга) — в верхней части.
+- Если ребёнок назвал цвет — это цвет основного тела объекта.
+- «рядом / справа / слева / сверху / над / под» — относительно существующих объектов; не перекрывай объекты без просьбы. Box не должен выходить за холст.
+- Размеры объектов 150–320 px, пропорции между объектами разумные (мышка меньше собаки, дом больше кошки).
+- Фигуры от заднего плана к переднему (тело → голова → глаза/нос/рот). Глаза — маленькие тёмные закрашенные кружки, рот — дуга path с fill "none".
+- «больше/меньше/передвинь» → update box; «перекрась» → update shapes; «убери X» → remove; «отмени/назад» → undo; «сотри всё/новый лист» → clear.
+- Несколько предметов в одной фразе → несколько add.
+- Непонятно или нельзя нарисовать → без ops, мягко переспроси в "say".
+- Страшное или недетское → нарисуй что-то доброе и мягко скажи об этом.`;
+}
+
+/* ============================================================
+   8. ЗАПРОС К СЕРВЕРУ (он ходит в GigaChat)
+   ============================================================ */
+async function callModel(prompt){
+  let res;
+  try{
+    res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-App-Password": settings.password || "" },
+      body: JSON.stringify({ prompt, model: settings.model || undefined })
+    });
+  }catch(e){
+    throw makeError(0, "offline");
+  }
+  let data = null;
+  try{ data = await res.json(); }catch(e){}
+  if(!res.ok) throw makeError(res.status, data && data.error, data && data.detail);
+  if(!data || typeof data.text !== "string" || !data.text) throw makeError(502, "empty");
+  return data.text;
+}
+function makeError(status, code, detail){
+  const e = new Error(code || ("HTTP " + status));
+  e.status = status; e.code = code || ""; e.detail = detail || "";
+  return e;
+}
+function humanError(err){
+  const c = err.code, s = err.status;
+  if(c === "offline") return "Нет связи с сервером. Проверь интернет";
+  if(c === "bad_password") return "Неверный пароль рисовалки. Открой ⚙ Настройки";
+  if(c === "no_server_key") return "На сервере не задан ключ GigaChat (GIGACHAT_AUTH_KEY)";
+  if(c === "oauth_failed") return "GigaChat не принял ключ. Проверь GIGACHAT_AUTH_KEY и SCOPE на сервере";
+  if(c === "gigachat_unreachable") return "Сервер не достучался до GigaChat. Попробуй позже";
+  if(s === 404) return "Не найден сервер рисовалки. Открой страницу по ссылке Vercel, а не как файл";
+  if(s === 429 || c === "rate_limited") return "Слишком быстро, подожди немножко";
+  if(c === "empty") return "GigaChat ответил пусто. Попробуй ещё раз";
+  if(s === 504 || c === "timeout") return "GigaChat думал слишком долго. Попробуй ещё раз";
+  if(s >= 500) return "Сервер GigaChat устал. Попробуй ещё раз";
+  return "Ошибка: " + (err.message || "неизвестно");
+}
+
+/* ============================================================
+   9. ПАРСИНГ ОТВЕТА
+   ============================================================ */
+function stripJsonFence(text){
+  let t = String(text).trim();
+  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if(fence) t = fence[1].trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if(a >= 0 && b > a) t = t.slice(a, b + 1);
+  return t;
+}
+function parseModelResponse(text){
+  const clean = stripJsonFence(text);
+  try{ return JSON.parse(clean); }
+  catch(e){ console.warn("JSON parse error", e, clean); return null; }
+}
+
+/* ============================================================
+   10. ОЗВУЧКА
+   ============================================================ */
+function speak(text){
+  if(!text || !("speechSynthesis" in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ru-RU"; u.rate = 1; u.pitch = 1.1;
+    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith("ru"));
+    if(v) u.voice = v;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+if("speechSynthesis" in window) speechSynthesis.getVoices();
+
+/* ============================================================
+   11. ОСНОВНОЙ ЦИКЛ: фраза → модель → сцена
+   ============================================================ */
+async function handlePhrase(phrase){
+  if(busy) return;
+  phrase = String(phrase || "").trim();
+  if(!phrase) return;
+
+  busy = true;
+  updateButtons();
+  setMicState("thinking");
+  setStatus("«" + phrase + "» — рисую…", false, true);
+  clearBigError();
+
+  try{
+    const raw = await callModel(buildPrompt(phrase));
+    const parsed = parseModelResponse(raw);
+    if(!parsed){
+      setStatus("Не поняла ответ, скажи ещё раз", true);
+      return;
+    }
+    const say = String(parsed.say || "").slice(0, 200);
+    const ops = Array.isArray(parsed.ops) ? parsed.ops : [];
+    busy = false;               // чтобы applyOps/кнопки обновились корректно
+    if(ops.length) applyOps(ops);
+    if(say){ setStatus(say); speak(say); }
+    else setStatus("Готово");
+  }catch(err){
+    console.error(err, err.detail);
+    const msg = humanError(err);
+    setStatus(msg, true);
+    showBigError(msg);
+    if(err.code === "bad_password") openSettings();
+  }finally{
+    busy = false;
+    setMicState("idle");
+    updateButtons();
+  }
+}
+
+/* ============================================================
+   12. МИКРОФОН / Web Speech API
+   Короткое нажатие (кнопка или пробел) — слушать до паузы.
+   Удержание дольше 0.5 с — слушать, пока держат.
+   Повторное нажатие во время прослушивания — стоп.
+   ============================================================ */
+const micBtn = $("mic"), micIcon = $("micicon");
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null, listening = false, gotError = false, tapMode = false;
+let finalText = "", interimText = "";
+let silenceTimer = null, maxTimer = null, startWatchdog = null;
+let pressT0 = 0;
+
+function setMicState(state){
+  micBtn.classList.toggle("listening", state === "listening");
+  micBtn.classList.toggle("thinking", state === "thinking");
+  micIcon.textContent = state === "thinking" ? "✏️" : "🎤";
+  micBtn.setAttribute("aria-label", state === "thinking" ? "Рисую" : state === "listening" ? "Слушаю" : "Говорить");
+}
+function clearMicTimers(){ clearTimeout(silenceTimer); clearTimeout(maxTimer); clearTimeout(startWatchdog); }
+
+function micProblem(msg, openTyping = false){
+  setStatus(msg, true, true);
+  showBigError(msg);
+  if(openTyping) showTyping();
+}
+
+function startListen(){
+  if(!SpeechRec){ micProblem("Этот браузер не умеет слушать. Открой в Chrome или Edge — или напиши словами", true); return; }
+  if(listening || busy) return;
+  clearBigError();
+  finalText = ""; interimText = ""; gotError = false; tapMode = false;
+
+  try{
+    recognition = new SpeechRec();
+    recognition.lang = "ru-RU";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+
+    recognition.onstart = () => {
+      clearTimeout(startWatchdog);
+      setStatus("Слушаю… говори!", false, true);
+    };
+    recognition.onresult = e => {
+      let f = "", i = "";
+      for(let k = 0; k < e.results.length; k++){
+        const r = e.results[k];
+        if(r.isFinal) f += r[0].transcript; else i += r[0].transcript;
+      }
+      finalText = f; interimText = i;
+      const t = (f + " " + i).trim();
+      if(t) setStatus(t, false, true);
+      if(tapMode){ clearTimeout(silenceTimer); silenceTimer = setTimeout(stopListen, 1400); }
+    };
+    recognition.onerror = e => {
+      gotError = true;
+      const msgs = {
+        "not-allowed": ["Нет доступа к микрофону. Нажми на значок замка в адресной строке и разреши микрофон", true],
+        "service-not-allowed": ["Браузер не разрешает распознавание речи. Можно написать словами", true],
+        "audio-capture": ["Микрофон не найден. Проверь, что он подключён и включён в Windows", true],
+        "network": ["Нет связи с сервисом распознавания речи. Проверь интернет", false],
+        "no-speech": ["Ничего не услышала. Нажми и скажи погромче", false],
+        "aborted": null
+      };
+      const m = e.error in msgs ? msgs[e.error] : ["Микрофон не сработал (" + e.error + "). Можно написать словами", true];
+      if(m) micProblem(m[0], m[1]);
+    };
+    recognition.onend = () => {
+      clearMicTimers();
+      listening = false;
+      if(!busy) setMicState("idle");
+      const t = (finalText + " " + interimText).trim();
+      if(t) handlePhrase(t);
+      else if(!gotError) setStatus("");
+    };
+
+    recognition.start();
+    listening = true;
+    setMicState("listening");
+    setStatus("Включаю микрофон…", false, true);
+    startWatchdog = setTimeout(() => {
+      if(listening && statusEl.textContent === "Включаю микрофон…"){
+        micProblem("Микрофон не включается. Посмотри, не ждёт ли браузер разрешения вверху окна", true);
+      }
+    }, 4000);
+  }catch(e){
+    listening = false; setMicState("idle");
+    micProblem("Не получилось включить микрофон. Можно написать словами", true);
+  }
+}
+function stopListen(){
+  clearMicTimers();
+  if(recognition && listening){ try{ recognition.stop(); }catch(e){} }
+}
+// после короткого нажатия: слушать до паузы, максимум 10 с
+function switchToTapMode(){
+  tapMode = true;
+  clearTimeout(maxTimer);
+  maxTimer = setTimeout(stopListen, 10000);
+  clearTimeout(silenceTimer);
+  if(finalText || interimText) silenceTimer = setTimeout(stopListen, 1400);
+}
+
+// Кнопка-микрофон
+micBtn.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  if(listening){ stopListen(); pressT0 = 0; return; }
+  pressT0 = Date.now();
+  startListen();
+});
+micBtn.addEventListener("pointerup", () => {
+  if(!pressT0) return;
+  if(Date.now() - pressT0 > 500) stopListen(); else switchToTapMode();
+  pressT0 = 0;
+});
+micBtn.addEventListener("pointercancel", () => { if(pressT0){ stopListen(); pressT0 = 0; } });
+micBtn.addEventListener("keydown", e => {
+  if(e.code === "Enter"){ e.preventDefault(); if(listening) stopListen(); else { startListen(); switchToTapMode(); } }
+});
+
+// Пробел
+let spaceT0 = 0;
+const typingTarget = el => el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+document.addEventListener("keydown", e => {
+  if(e.code !== "Space" || typingTarget(e.target) || isModalOpen()) return;
+  e.preventDefault();
+  if(e.repeat) return;
+  if(listening){ stopListen(); spaceT0 = 0; return; }
+  spaceT0 = Date.now();
+  startListen();
+});
+document.addEventListener("keyup", e => {
+  if(e.code !== "Space" || typingTarget(e.target) || isModalOpen()) return;
+  e.preventDefault();
+  if(!spaceT0) return;
+  if(Date.now() - spaceT0 > 500) stopListen(); else switchToTapMode();
+  spaceT0 = 0;
+});
+document.addEventListener("keydown", e => { if(e.key === "Escape" && isModalOpen()) closeSettings(); });
+
+if(!SpeechRec){
+  setStatus("Этот браузер не умеет слушать. Открой в Chrome или Edge — или напиши словами", true, true);
+}
+
+/* ============================================================
+   13. ТЕКСТОВЫЙ ВВОД
+   ============================================================ */
+function showTyping(){ $("typewrap").classList.add("show"); }
+$("btnType").onclick = () => {
+  const open = $("typewrap").classList.toggle("show");
+  if(open) $("typeinput").focus();
+};
+function sendTyped(){
+  const v = $("typeinput").value;
+  if(!v.trim() || busy) return;
+  $("typeinput").value = "";
+  $("typeinput").blur();
+  handlePhrase(v);
+}
+$("typesend").onclick = sendTyped;
+$("typeinput").addEventListener("keydown", e => { if(e.key === "Enter"){ e.preventDefault(); sendTyped(); } });
+
+/* ============================================================
+   14. СТАРТ
+   ============================================================ */
+function clone(x){ return JSON.parse(JSON.stringify(x)); }
+if(location.protocol === "file:"){
+  setStatus("Открой страницу по ссылке Vercel — как файл она рисовать не сможет", true, true);
+}
+redrawAll();
+</script>
+</body>
+</html>
