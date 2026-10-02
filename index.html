@@ -1692,22 +1692,26 @@ function giraffeShapes(color, seed){
 // зайка сидит (тело выше, чем шире, передние лапки) — не ещё один
 // "4-ногий стандарт", а узнаваемая поза именно для зайца
 function rabbitShapes(color, seed){
-  const rng = rngFromSeed(seed);
-  const j = () => 0.92 + rng()*0.16;
-  const bodyRX=22*j(), bodyRY=26*j(), headR=18*j();
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#FFF4E6", inner="#E9A6A6", dark="#493A35";
+  const bodyRX=23*j(), bodyRY=22*j(), headR=22*j();
   return [
-    { t:"ellipse", cx:52, cy:72, rx:bodyRX, ry:bodyRY, fill:color },
-    { t:"ellipse", cx:40, cy:90, rx:9, ry:6, fill:color }, // передняя лапка 1
-    { t:"ellipse", cx:58, cy:92, rx:9, ry:6, fill:color }, // передняя лапка 2
-    { t:"ellipse", cx:74, cy:68, rx:7, ry:9, fill:color }, // хвостик-помпон
-    { t:"circle", cx:38, cy:34, r:headR, fill:color }, // голова
-    { t:"ellipse", cx:26, cy:4, rx:8, ry:15*j(), fill:color }, // ухо 1 — потолще, не прутик
-    { t:"ellipse", cx:50, cy:4, rx:8, ry:15*j(), fill:color }, // ухо 2
-    { t:"ellipse", cx:26, cy:5, rx:3.2, ry:9*j(), fill:"#F2A6B8" }, // внутреннее ухо 1 — двуцветное, как у лабубу
-    { t:"ellipse", cx:50, cy:5, rx:3.2, ry:9*j(), fill:"#F2A6B8" }, // внутреннее ухо 2
-    ...plushEyes(32, 32, 6, 3.4, 4.4), // сплошные эллипсы с бликом — тот же принцип, что и у лабубу
-    { t:"circle", cx:38, cy:40, r:2, fill:"#F2A6B8" },
-    smile(32,44,5)
+    { t:"ellipse", cx:39, cy:22, rx:8, ry:19*j(), fill:color }, // дальнее ухо
+    { t:"ellipse", cx:39, cy:23, rx:4, ry:13*j(), fill:inner },
+    { t:"ellipse", cx:61, cy:22, rx:9, ry:21*j(), fill:color }, // ближнее ухо
+    { t:"ellipse", cx:61, cy:23, rx:5, ry:15*j(), fill:inner },
+    { t:"ellipse", cx:50, cy:70, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"circle", cx:50, cy:45, r:headR, fill:color }, // голова
+    { t:"ellipse", cx:40, cy:53, rx:10, ry:9, fill:light }, // щёчки
+    { t:"ellipse", cx:60, cy:53, rx:10, ry:9, fill:light },
+    { t:"ellipse", cx:42, cy:42, rx:5, ry:6, fill:dark }, // глаза — крупные
+    { t:"ellipse", cx:58, cy:42, rx:5, ry:6, fill:dark },
+    { t:"circle", cx:40.5, cy:40, r:1.8, fill:"#fff" }, // блики
+    { t:"circle", cx:56.5, cy:40, r:1.8, fill:"#fff" },
+    { t:"ellipse", cx:50, cy:51, rx:3.5, ry:2.5, fill:inner }, // носик
+    { t:"ellipse", cx:39, cy:82, rx:8, ry:5, fill:light }, // лапки
+    { t:"ellipse", cx:61, cy:82, rx:8, ry:5, fill:light },
+    { t:"circle", cx:75, cy:68, r:7, fill:light } // хвостик
   ];
 }
 
