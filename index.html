@@ -276,7 +276,7 @@ $("voiceTest").onclick = () => {
 const VOICE_LS_KEY = "drawer_voice_lib_v1";
 const VOICE_PHRASES = [
   "Мяу!","Гав-гав!","Пи-пи!","Топ-топ!","Тяв!","У-у-у!","Р-р-р!","Р-р-ры!","Ту-у-у!","Му-у!",
-  "Иго-го!","Хрю-хрю!","Бе-е!","Ква-ква!","Чик-чирик!","Угу-угу!","Попка дурак!","Гу-гу!","Ш-ш-ш!",
+  "Иго-го!","Хрю-хрю!","Бе-е!","Ква-ква!","Чик-чирик!","Угу-угу!","Попка дурак!","Гу-гу!","Ш-ш-ш!","Га-га-га!",
   "Би-би!","Би-биип!","Ту-ту, чух-чух!","Вжжжух!","Тр-р-р-р!","Пуск! Фьюх!",
   "Готово!","Отменил","Новый лист","Сохранено","Нечего отменять",
   "Не понял ответ, скажи ещё раз","Такого я ещё не умею рисовать, попроси другого зверя или предмет"
@@ -879,20 +879,26 @@ function starfishShapes(color){
 
 function wheeledVehicle(o){
   const color = o.color;
+  const rng = o.rng || Math.random;
   const shapes = [];
   const bw = o.long ? 80 : 60, bh = 24, bx = 50 - bw/2, by = 50;
   shapes.push({ t:"rect", x:bx, y:by, w:bw, h:bh, fill:color });
-  shapes.push({ t:"rect", x:bx+bw*0.15, y:by-18, w:bw*(o.long?0.7:0.5), h:20, fill:color });
+  const cabH = 20 * (0.85 + rng()*0.3); // то повыше (фургон), то пониже (седан)
+  shapes.push({ t:"rect", x:bx+bw*0.15, y:by-cabH+2, w:bw*(o.long?0.7:0.5), h:cabH, fill:color });
   const winCount = o.windows || 2;
   for(let i=0;i<winCount;i++){
-    shapes.push({ t:"rect", x:bx+bw*0.2+i*(bw*0.55/winCount), y:by-14, w:bw*0.4/winCount, h:12, fill:"#BEE3F8" });
+    shapes.push({ t:"rect", x:bx+bw*0.2+i*(bw*0.55/winCount), y:by-cabH+6, w:bw*0.4/winCount, h:12, fill:"#BEE3F8" });
   }
   if(o.cargo) shapes.push({ t:"rect", x:bx+bw*0.6, y:by-10, w:bw*0.35, h:34, fill:color });
+  if(!o.long && rng() < 0.3){
+    shapes.push({ t:"line", x1:bx+bw*0.25, y1:by-cabH+2, x2:bx+bw*0.25, y2:by-cabH-8, stroke:"#2A2D3A" }); // антенна иногда
+  }
+  const hubColor = pick(rng, ["#C9CCD6","#E8E8E8","#8D97A5"]);
   const wheelY = by+bh;
   const wheelXs = o.long ? [bx+bw*0.2, bx+bw*0.5, bx+bw*0.8] : [bx+bw*0.22, bx+bw*0.78];
   wheelXs.forEach(wx => {
     shapes.push({ t:"circle", cx:wx, cy:wheelY, r:11, fill:"#2A2D3A" });
-    shapes.push({ t:"circle", cx:wx, cy:wheelY, r:5, fill:"#C9CCD6" });
+    shapes.push({ t:"circle", cx:wx, cy:wheelY, r:5, fill:hubColor });
   });
   return shapes;
 }
@@ -1070,18 +1076,26 @@ function snowmanShapes(){
   ];
 }
 
-function houseShapes(color){
-  return [
+function houseShapes(color, seed){
+  const rng = rngFromSeed(seed);
+  const roofColor = pick(rng, ["#8B5A2B","#6B4A2F","#A0522D"]);
+  // дверь слева/по центру/справа — и окна подобраны так, чтобы не перекрыть дверь
+  const variant = pick(rng, ["left","center","right"]);
+  const doorX = variant === "left" ? 24 : variant === "right" ? 64 : 44;
+  const windows = variant === "left" ? [58] : variant === "right" ? [28] : [28,60];
+  const shapes = [
     { t:"rect", x:20, y:50, w:60, h:45, fill:color },
-    { t:"poly", p:[[12,50],[50,15],[88,50]], fill:"#8B5A2B" },
-    { t:"rect", x:44, y:70, w:14, h:25, fill:"#5A3A22" },
-    { t:"rect", x:28, y:58, w:14, h:14, fill:"#BEE3F8" },
-    { t:"rect", x:60, y:58, w:14, h:14, fill:"#BEE3F8" }
+    { t:"poly", p:[[12,50],[50,15],[88,50]], fill:roofColor },
+    { t:"rect", x:doorX, y:70, w:14, h:25, fill:"#5A3A22" }
   ];
+  windows.forEach(x => shapes.push({ t:"rect", x, y:58, w:14, h:14, fill:"#BEE3F8" }));
+  if(rng() < 0.45) shapes.push({ t:"rect", x:68, y:20, w:10, h:20, fill:roofColor }); // труба
+  if(rng() < 0.35) shapes.push({ t:"circle", cx:50, cy:30, r:7, fill:"#BEE3F8" }); // чердачное окно
+  return shapes;
 }
 
-function castleShapes(color){
-  const shapes = houseShapes(color);
+function castleShapes(color, seed){
+  const shapes = houseShapes(color, seed);
   shapes.push({ t:"rect", x:4, y:40, w:16, h:55, fill:color });
   shapes.push({ t:"rect", x:82, y:40, w:16, h:55, fill:color });
   [0,1,2].forEach(i => shapes.push({ t:"rect", x:6+i*6, y:34, w:4, h:8, fill:color }));
@@ -1203,6 +1217,7 @@ const TEMPLATE_INFO = {
   parrot:"попугай, попугайчик",
   penguin:"пингвин, пингвинёнок",
   peacock:"павлин",
+  goose:"гусь, гусик, гусыня, гусёнок",
   fish:"рыба, рыбка, рыбёшка",
   crab:"краб, крабик",
   octopus:"осьминог, осьминожка",
@@ -1251,7 +1266,7 @@ const TEMPLATE_SOUND = {
   fox:"Тяв!", wolf:"У-у-у!", bear:"Р-р-р!", lion:"Р-р-ры!",
   elephant:"Ту-у-у!", cow:"Му-у!", horse:"Иго-го!", pig:"Хрю-хрю!",
   sheep:"Бе-е!", frog:"Ква-ква!", bird:"Чик-чирик!", owl:"Угу-угу!",
-  parrot:"Попка дурак!", penguin:"Гу-гу!", snake:"Ш-ш-ш!",
+  parrot:"Попка дурак!", penguin:"Гу-гу!", snake:"Ш-ш-ш!", goose:"Га-га-га!",
   car:"Би-би!", truck:"Би-биип!", bus:"Би-би!", train:"Ту-ту, чух-чух!",
   plane:"Вжжжух!", helicopter:"Тр-р-р-р!", boat:"Ту-у-у!", rocket:"Пуск! Фьюх!"
 };
@@ -1266,6 +1281,23 @@ function elephantShapes(color){
     { t:"line", x1:92, y1:52, x2:99, y2:62, stroke:color, strokeWidth:5 },
     ...faceDots(21,42,5,2.6),
     smile(21,52,6)
+  ];
+}
+
+function gooseShapes(color){
+  const legColor = "#F2994A";
+  return [
+    { t:"ellipse", cx:58, cy:68, rx:30, ry:20, fill:color }, // тело
+    { t:"poly", p:[[82,62],[96,68],[82,76]], fill:color }, // хвост сзади
+    { t:"path", d:"M40 56 Q16 46 20 22 Q22 8 30 5", fill:"none", stroke:color, strokeWidth:10 }, // длинная s-образная шея
+    { t:"circle", cx:27, cy:6, r:8, fill:color }, // голова
+    { t:"poly", p:[[19,3],[4,1],[18,10]], fill:legColor }, // клюв
+    { t:"circle", cx:23, cy:3, r:1.6, fill:T_INK }, // глаз
+    { t:"line", x1:48, y1:86, x2:46, y2:103, stroke:legColor },
+    { t:"line", x1:66, y1:86, x2:68, y2:103, stroke:legColor },
+    { t:"poly", p:[[40,103],[46,103],[53,108],[46,110],[40,107]], fill:legColor }, // перепончатая лапа 1
+    { t:"poly", p:[[60,103],[66,103],[73,108],[66,110],[60,107]], fill:legColor }, // перепончатая лапа 2
+    { t:"ellipse", cx:52, cy:64, rx:11, ry:7, fill:"none", stroke:T_INK } // сложенное крыло
   ];
 }
 
@@ -1288,8 +1320,8 @@ const TEMPLATES = {
   cat: (c,seed) => quadruped({ color:hexOr(c,"#FFB74D"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["curl","wag"] }),
   dog: (c,seed) => quadruped({ color:hexOr(c,"#C68B59"), rng:rngFromSeed(seed), earStyle:["floppy","triangle"], tailStyle:["wag","straight"], snout:true }),
   mouse: (c,seed) => quadruped({ color:hexOr(c,"#C9CCD6"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"straight", bodyRX:24, bodyRY:14, headR:13, legStyle:"short" }),
-  rabbit: (c,seed) => quadruped({ color:hexOr(c,"#F5F0E6"), rng:rngFromSeed(seed), earStyle:"long", tailStyle:"short" }),
-  fox: (c,seed) => quadruped({ color:hexOr(c,"#E8702A"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:"fluffy", snout:true }),
+  rabbit: (c,seed) => quadruped({ color:hexOr(c,"#F5F0E6"), rng:rngFromSeed(seed), earStyle:"long", tailStyle:["short","fluffy"] }),
+  fox: (c,seed) => quadruped({ color:hexOr(c,"#E8702A"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["fluffy","wag"], snout:true }),
   wolf: (c,seed) => quadruped({ color:hexOr(c,"#8D97A5"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["straight","wag"], snout:true, bodyRX:36, bodyRY:19 }),
   bear: (c,seed) => quadruped({ color:hexOr(c,"#8B5A2B"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"short", legStyle:"short", bodyRX:36, bodyRY:24, headR:20 }),
   lion: (c,seed) => quadruped({ color:hexOr(c,"#E8B64A"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"wag", mane:true, maneChance:0.6 }),
@@ -1312,6 +1344,7 @@ const TEMPLATES = {
   parrot: (c,seed) => birdBase({ color:hexOr(c,"#45C26B"), rng:rngFromSeed(seed), wingColor:"#F2C94C", tailColor:"#E85D5D" }),
   penguin: (c,seed) => birdBase({ color:hexOr(c,"#2B2E36"), rng:rngFromSeed(seed), bellyPatch:true, beakColor:"#F2994A" }),
   peacock: (c,seed) => birdBase({ color:hexOr(c,"#2FAE8E"), rng:rngFromSeed(seed), fanTail:true }),
+  goose: c => gooseShapes(hexOr(c,"#F2F0E8")),
 
   fish: c => fishBase({ color:hexOr(c,"#4FA3E3") }),
   dolphin: c => fishBase({ color:hexOr(c,"#8AA9C9"), curvedBody:true, beak:true }),
@@ -1321,9 +1354,9 @@ const TEMPLATES = {
   jellyfish: c => tentacled({ color:hexOr(c,"#C9A6E0"), arms:6, face:false }),
   starfish: c => starfishShapes(hexOr(c,"#F2994A")),
 
-  car: c => wheeledVehicle({ color:hexOr(c,"#E8544A"), segments:1 }),
-  truck: c => wheeledVehicle({ color:hexOr(c,"#4F8FE3"), segments:2, cargo:true }),
-  bus: c => wheeledVehicle({ color:hexOr(c,"#F2C94C"), long:true, windows:4 }),
+  car: (c,seed) => wheeledVehicle({ color:hexOr(c,"#E8544A"), rng:rngFromSeed(seed), segments:1 }),
+  truck: (c,seed) => wheeledVehicle({ color:hexOr(c,"#4F8FE3"), rng:rngFromSeed(seed), segments:2, cargo:true }),
+  bus: (c,seed) => wheeledVehicle({ color:hexOr(c,"#F2C94C"), rng:rngFromSeed(seed), long:true, windows:4 }),
   train: c => trainShapes(hexOr(c,"#4F8FE3")),
   plane: c => planeShapes(hexOr(c,"#D8DEE6")),
   helicopter: c => helicopterShapes(hexOr(c,"#E85D5D")),
@@ -1345,8 +1378,8 @@ const TEMPLATES = {
   lightning: c => lightningShapes(hexOr(c,"#F2C94C")),
   snowman: () => snowmanShapes(),
 
-  house: c => houseShapes(hexOr(c,"#E8544A")),
-  castle: c => castleShapes(hexOr(c,"#C9CCD6")),
+  house: (c,seed) => houseShapes(hexOr(c,"#E8544A"), seed),
+  castle: (c,seed) => castleShapes(hexOr(c,"#C9CCD6"), seed),
   trafficlight: () => trafficlightShapes(),
   flag: c => flagShapes(hexOr(c,"#E8544A")),
   clock: c => clockShapes(hexOr(c,"#FFFFFF")),
