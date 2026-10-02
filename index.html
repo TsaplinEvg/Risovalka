@@ -52,9 +52,17 @@
   .card p{margin:6px 0 14px;color:#5a5f74;font-size:14px;line-height:1.45}
   .card label{display:block;font-size:13px;font-weight:700;margin:14px 0 6px;color:#3a3f54}
   .card input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #dfe2ec;font-size:15px;background:#fafbff;color:var(--ink);outline:none}
+  .card select{flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1px solid #dfe2ec;font-size:15px;background:#fafbff;color:var(--ink);outline:none}
   .card input:focus{border-color:var(--accent)}
   .card .row{display:flex;gap:10px;margin-top:18px}
   .card .row button{flex:1;border:none;border-radius:14px;padding:14px;font-size:16px;font-weight:700;cursor:pointer}
+  #voiceLibList{max-height:56vh;overflow:auto;display:flex;flex-direction:column;gap:6px;margin-top:10px}
+  .voicerow{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:#f6f7fb}
+  .voicerow-text{flex:1;font-size:14px;color:var(--ink)}
+  .voicerow button{border:none;border-radius:10px;width:36px;height:36px;font-size:15px;cursor:pointer;background:#eef0f7;flex:0 0 auto}
+  .voicerow button.rec.active{background:#ff5b5b;color:#fff}
+  .voicerow button:disabled{opacity:.35;cursor:default}
+  .voicerow-status{flex:0 0 20px;text-align:center;font-size:15px}
   .btn-primary{background:var(--accent);color:#fff} .btn-ghost{background:#eef0f7;color:var(--ink)}
   .link{color:#3aa6ff;font-size:13px;text-decoration:none} .link:hover{text-decoration:underline}
   .note{font-size:12px;color:#8a90a6;margin-top:10px;line-height:1.4}
@@ -75,6 +83,7 @@
     <button class="tbtn ghost" id="btnUndo" disabled>↶ Назад</button>
     <button class="tbtn ghost" id="btnNew" disabled>🆕 Новый лист</button>
     <button class="tbtn ghost" id="btnSettings" aria-label="Настройки">⚙</button>
+    <button class="tbtn ghost" id="btnVoiceLib" aria-label="Мой голос">🎙</button>
     <span id="title">Рисовалка</span>
   </div>
 
@@ -119,9 +128,28 @@
         «По-настоящему» — эксперимент: GigaChat рисует настоящую картинку (Kandinsky) вместо фигур.
         Долго (до минуты) и часто рисует не то, что просили — зато выглядит красиво. Переключается сразу, без «Сохранить».
       </div>
+      <label for="voiceSelect">Голос озвучки</label>
+      <div class="row">
+        <select id="voiceSelect"></select>
+        <button class="btn-ghost" id="voiceTest" style="flex:0 0 auto">▶ Послушать</button>
+      </div>
+      <div class="note">
+        Список голосов — те, что установлены в вашей системе/браузере. 🌐 — сетевой голос (обычно звучит живее системного).
+      </div>
       <div class="row">
         <button class="btn-ghost" id="settingsCancel">Отмена</button>
         <button class="btn-primary" id="settingsSave">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="voiceLibModal">
+    <div class="card">
+      <h2>🎙 Мой голос</h2>
+      <p>Запишите фразы своим голосом — рисовалка будет проигрывать именно их. Что не записано — скажет обычный голос из ⚙ Настроек.</p>
+      <div id="voiceLibList"></div>
+      <div class="row">
+        <button class="btn-ghost" id="voiceLibClose">Закрыть</button>
       </div>
     </div>
   </div>
@@ -152,7 +180,7 @@ const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").mat
    2. НАСТРОЙКИ
    ============================================================ */
 const LS_KEY = "drawer_settings_gigachat_v2";
-let settings = { password: "", model: "", mode: "templates" }; // mode: "templates" | "image"
+let settings = { password: "", model: "", mode: "templates", voiceName: "" }; // mode: "templates" | "image"
 function loadSettings(){
   try{
     const raw = localStorage.getItem(LS_KEY);
@@ -184,10 +212,137 @@ $("modeAI").onclick = () => setMode("image");
 syncModeButtons();
 applyModeVisibility();
 
+// список голосов браузер часто догружает асинхронно (особенно сетевые) —
+// пересобираем выпадающий список и при открытии настроек, и по событию.
+function pickBestVoice(voices){
+  const ru = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith("ru"));
+  if(!ru.length) return null;
+  const score = v => (!v.localService ? 2 : 0) + (/online|neural|natural/i.test(v.name) ? 1 : 0);
+  return ru.slice().sort((a,b) => score(b) - score(a))[0];
+}
+function populateVoiceSelect(){
+  if(!("speechSynthesis" in window)) return;
+  const sel = $("voiceSelect");
+  const voices = speechSynthesis.getVoices();
+  const ru = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith("ru"));
+  const list = ru.length ? ru : voices;
+  sel.innerHTML = "";
+  const autoOpt = document.createElement("option");
+  autoOpt.value = ""; autoOpt.textContent = "Автоматически (по умолчанию)";
+  sel.appendChild(autoOpt);
+  list.forEach(v => {
+    const opt = document.createElement("option");
+    opt.value = v.name;
+    opt.textContent = v.name + (v.localService ? "" : " 🌐");
+    sel.appendChild(opt);
+  });
+  sel.value = settings.voiceName && list.some(v => v.name === settings.voiceName) ? settings.voiceName : "";
+}
+if("speechSynthesis" in window){
+  speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = populateVoiceSelect;
+}
+$("voiceTest").onclick = () => {
+  if(!("speechSynthesis" in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance("Привет! Вот такой у меня голос.");
+  u.lang = "ru-RU"; u.rate = 1; u.pitch = 1.1;
+  const name = $("voiceSelect").value;
+  const voices = speechSynthesis.getVoices();
+  const v = (name && voices.find(v => v.name === name)) || pickBestVoice(voices);
+  if(v) u.voice = v;
+  speechSynthesis.speak(u);
+};
+
+/* ---- Библиотека своего голоса: запись фиксированных фраз вместо TTS ---- */
+const VOICE_LS_KEY = "drawer_voice_lib_v1";
+const VOICE_PHRASES = [
+  "Мяу!","Гав-гав!","Пи-пи!","Топ-топ!","Тяв!","У-у-у!","Р-р-р!","Р-р-ры!","Ту-у-у!","Му-у!",
+  "Иго-го!","Хрю-хрю!","Бе-е!","Ква-ква!","Чик-чирик!","Угу-угу!","Попка дурак!","Гу-гу!","Ш-ш-ш!",
+  "Би-би!","Би-биип!","Ту-ту, чух-чух!","Вжжжух!","Тр-р-р-р!","Пуск! Фьюх!",
+  "Готово!","Отменил","Новый лист","Сохранено","Нечего отменять",
+  "Не понял ответ, скажи ещё раз","Такого я ещё не умею рисовать, попроси другого зверя или предмет"
+];
+let voiceLib = {}; // { "фраза": "data:audio/webm;base64,..." }
+function loadVoiceLib(){
+  try{ const raw = localStorage.getItem(VOICE_LS_KEY); if(raw) voiceLib = JSON.parse(raw) || {}; }catch(e){}
+}
+function saveVoiceLib(){ try{ localStorage.setItem(VOICE_LS_KEY, JSON.stringify(voiceLib)); }catch(e){} }
+loadVoiceLib();
+
+// Проигрывает свою запись вместо TTS, если она есть. Возвращает true/false,
+// чтобы вызывающий код мог сам решить, нужен ли TTS-фоллбэк для этой фразы.
+function speakPhrase(text){
+  const clip = voiceLib[text];
+  if(!clip) return false;
+  try{ new Audio(clip).play(); }catch(e){}
+  return true;
+}
+
+let voiceRecorder = null, voiceRecStream = null, voiceRecActiveBtn = null;
+function stopVoiceRecording(){
+  if(voiceRecorder && voiceRecorder.state !== "inactive") voiceRecorder.stop();
+  if(voiceRecStream) voiceRecStream.getTracks().forEach(t => t.stop());
+  if(voiceRecActiveBtn) voiceRecActiveBtn.classList.remove("active");
+  voiceRecorder = null; voiceRecStream = null; voiceRecActiveBtn = null;
+}
+async function toggleVoiceRecord(phrase, btn, onDone){
+  if(voiceRecorder){ stopVoiceRecording(); return; }
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e){ setStatus("Нет доступа к микрофону для записи", true); return; }
+  voiceRecStream = stream;
+  const chunks = [];
+  const rec = new MediaRecorder(stream);
+  voiceRecorder = rec;
+  voiceRecActiveBtn = btn;
+  btn.classList.add("active");
+  rec.ondataavailable = e => { if(e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    voiceRecorder = null; voiceRecStream = null; voiceRecActiveBtn = null;
+    btn.classList.remove("active");
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    const reader = new FileReader();
+    reader.onload = () => { voiceLib[phrase] = reader.result; saveVoiceLib(); onDone(); };
+    reader.readAsDataURL(blob);
+  };
+  rec.start();
+}
+function renderVoiceLib(){
+  const list = $("voiceLibList");
+  list.innerHTML = "";
+  VOICE_PHRASES.forEach(phrase => {
+    const row = document.createElement("div");
+    row.className = "voicerow";
+    const textEl = document.createElement("span");
+    textEl.className = "voicerow-text";
+    textEl.textContent = phrase;
+    const recBtn = document.createElement("button");
+    recBtn.className = "rec"; recBtn.textContent = "🔴"; recBtn.title = "Записать / остановить";
+    const playBtn = document.createElement("button");
+    playBtn.textContent = "▶"; playBtn.title = "Прослушать";
+    playBtn.disabled = !voiceLib[phrase];
+    const statusEl2 = document.createElement("span");
+    statusEl2.className = "voicerow-status";
+    statusEl2.textContent = voiceLib[phrase] ? "✅" : "—";
+    recBtn.onclick = () => toggleVoiceRecord(phrase, recBtn, () => { playBtn.disabled = false; statusEl2.textContent = "✅"; });
+    playBtn.onclick = () => { if(voiceLib[phrase]) new Audio(voiceLib[phrase]).play(); };
+    row.append(textEl, recBtn, playBtn, statusEl2);
+    list.appendChild(row);
+  });
+}
+function openVoiceLib(){ renderVoiceLib(); $("voiceLibModal").classList.add("show"); }
+function closeVoiceLib(){ stopVoiceRecording(); $("voiceLibModal").classList.remove("show"); }
+$("btnVoiceLib").onclick = openVoiceLib;
+$("voiceLibClose").onclick = closeVoiceLib;
+$("voiceLibModal").addEventListener("click", e => { if(e.target.id === "voiceLibModal") closeVoiceLib(); });
+
 function openSettings(){
   $("password").value = settings.password || "";
   $("model").value = settings.model || "";
   syncModeButtons();
+  populateVoiceSelect();
   $("settingsModal").classList.add("show");
   setTimeout(() => $("password").focus(), 50);
 }
@@ -197,10 +352,11 @@ $("settingsCancel").onclick = closeSettings;
 $("settingsSave").onclick = () => {
   settings.password = $("password").value.trim();
   settings.model = $("model").value.trim();
-  saveSettings(); closeSettings(); setStatus("Сохранено");
+  settings.voiceName = $("voiceSelect").value;
+  saveSettings(); closeSettings(); setStatus("Сохранено"); speakPhrase("Сохранено");
 };
 $("settingsModal").addEventListener("click", e => { if(e.target.id === "settingsModal") closeSettings(); });
-const isModalOpen = () => $("settingsModal").classList.contains("show");
+const isModalOpen = () => $("settingsModal").classList.contains("show") || $("voiceLibModal").classList.contains("show");
 
 /* ============================================================
    3. СТАТУСЫ
@@ -339,13 +495,17 @@ function drawShape(rc, into, sh, s, seed){
   const fill = sh.fill && sh.fill !== "none" ? String(sh.fill) : null;
   const stroke = sh.stroke ? String(sh.stroke) : "#2A2D3A";
   const small = shapeSize(sh) * s < 20;   // мелочь: глаза, нос, пуговицы
+  // crisp — тонкие радиальные штрихи (лучи солнца, шерсть гривы): обычная
+  // "рукописная" дрожь (roughness/bowing) на таких коротких линиях делает
+  // половину штрихов едва заметными — отключаем дрожание, оставляя лёгкую
+  // шероховатость, чтобы все штрихи были одинаково чётко видны.
   const base = {
     seed, stroke,
-    strokeWidth: small ? 2 : 3,
-    roughness: small ? 0.6 : 1.3,
-    bowing: 1.2,
+    strokeWidth: sh.crisp ? 2.5 : (small ? 2 : 3),
+    roughness: sh.crisp ? 0.4 : (small ? 0.6 : 1.3),
+    bowing: sh.crisp ? 0.3 : 1.2,
     maxRandomnessOffset: 2.2 / s,       // ~2 px дрожания на экране
-    disableMultiStroke: small
+    disableMultiStroke: sh.crisp ? true : small
   };
 
   if(fill && sh.t !== "line"){
@@ -512,25 +672,28 @@ function quadruped(o){
   if(pattern === "wool"){
     [[46,44],[58,40],[70,46],[40,58],[54,62],[68,60],[78,52]].forEach(([x,y]) => shapes.push({ t:"circle", cx:x, cy:y, r:9, fill:color }));
   }
-  if(mane){
-    for(let a=0;a<10;a++){
-      const ang = (a/10) * Math.PI*2;
-      shapes.push({ t:"line",
-        x1: hcx + Math.cos(ang)*(headR*0.95), y1: hcy + Math.sin(ang)*(headR*0.95),
-        x2: hcx + Math.cos(ang)*(headR*1.75), y2: hcy + Math.sin(ang)*(headR*1.75),
-        stroke: o.maneColor || "#B5651D", strokeWidth:3 });
-    }
-  }
   shapes.push(...legShapes(o.legCount||4, bcx-bodyRX*0.9, bodyRX*1.8, bcy+bodyRY*0.55, o.legStyle, color));
   shapes.push(...tailShapes(tailStyle, bcx+bodyRX*0.85, bcy, color));
   shapes.push({ t:"circle", cx:hcx, cy:hcy, r:headR, fill:color });
   shapes.push(...earShapes(earStyle, hcx, hcy, headR, color));
   if(o.horns) shapes.push(...earShapes("horns", hcx, hcy, headR, color));
+  if(mane){
+    // рисуется ПОСЛЕ ушей, иначе уши (идут поверх по z-order) перекрывают
+    // половину лучей гривы возле макушки, и грива выглядит "рваной"
+    const n = 14;
+    for(let a=0;a<n;a++){
+      const ang = (a/n) * Math.PI*2;
+      shapes.push({ t:"line", crisp:true,
+        x1: hcx + Math.cos(ang)*(headR*0.9), y1: hcy + Math.sin(ang)*(headR*0.9),
+        x2: hcx + Math.cos(ang)*(headR*1.7), y2: hcy + Math.sin(ang)*(headR*1.7),
+        stroke: o.maneColor || "#B5651D" });
+    }
+  }
   if(o.quills){
     for(let i=0;i<8;i++){
       const t0 = i/8;
       const px = bcx - bodyRX*0.3 + t0*bodyRX*1.1, py = bcy - bodyRY*0.9;
-      shapes.push({ t:"line", x1:px, y1:py, x2:px + (i%2?6:-6), y2:py-16, stroke:T_INK, strokeWidth:2 });
+      shapes.push({ t:"line", crisp:true, x1:px, y1:py, x2:px + (i%2?6:-6), y2:py-16, stroke:T_INK });
     }
   }
   if(o.snout){
@@ -795,9 +958,10 @@ function airBalloonShapes(color){
 
 function sunShapes(color){
   const shapes = [{ t:"circle", cx:50, cy:50, r:26, fill:color }];
-  for(let i=0;i<8;i++){
-    const ang = i*Math.PI/4;
-    shapes.push({ t:"line", x1:50+Math.cos(ang)*30, y1:50+Math.sin(ang)*30, x2:50+Math.cos(ang)*42, y2:50+Math.sin(ang)*42, stroke:color, strokeWidth:4 });
+  const n = 12;
+  for(let i=0;i<n;i++){
+    const ang = i*2*Math.PI/n;
+    shapes.push({ t:"line", crisp:true, x1:50+Math.cos(ang)*30, y1:50+Math.sin(ang)*30, x2:50+Math.cos(ang)*42, y2:50+Math.sin(ang)*42, stroke:color });
   }
   shapes.push(...faceDots(44,46,7));
   shapes.push(smile(44,56,10));
@@ -1208,18 +1372,18 @@ function showAiImage(dataUrl){
 function doUndo(){
   if(busy) return;
   if(settings.mode === "image"){
-    if(aiIndex <= 0){ setStatus("Нечего отменять"); return; }
+    if(aiIndex <= 0){ setStatus("Нечего отменять"); speakPhrase("Нечего отменять"); return; }
     aiIndex--;
     aiPicEl.src = aiImages[aiIndex];
     applyModeVisibility();
     updateButtons();
-    setStatus("Отменил");
+    setStatus("Отменил"); speakPhrase("Отменил");
     return;
   }
-  if(undoStack.length === 0){ setStatus("Нечего отменять"); return; }
+  if(undoStack.length === 0){ setStatus("Нечего отменять"); speakPhrase("Нечего отменять"); return; }
   scene = undoStack.pop();
   redrawAll();
-  setStatus("Отменил");
+  setStatus("Отменил"); speakPhrase("Отменил");
 }
 function doNew(){
   if(busy) return;
@@ -1228,14 +1392,14 @@ function doNew(){
     aiImages = []; aiIndex = -1; aiPicEl.src = "";
     applyModeVisibility();
     updateButtons();
-    setStatus("Новый лист");
+    setStatus("Новый лист"); speakPhrase("Новый лист");
     return;
   }
   if(scene.length === 0) return;
   pushHistory(clone(scene));
   scene = [];
   redrawAll();
-  setStatus("Новый лист");
+  setStatus("Новый лист"); speakPhrase("Новый лист");
 }
 $("btnUndo").onclick = doUndo;
 $("btnNew").onclick = doNew;
@@ -1255,18 +1419,32 @@ function boxesTooClose(a, b, gap){
   return !(a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x ||
            a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y);
 }
-function findFreeBox(box, others){
-  if(!others.length || !others.some(o => boxesTooClose(box, o.box, MIN_GAP))) return box;
-  const stepsX = [0, 50, 100, 150, 200, 260, 320, 380, -50, -100, -150, -200, -260, -320, -380];
-  const stepsY = [0, 50, 100, 150, 200, -50, -100, -150, -200];
-  for(const dy of stepsY){
-    for(const dx of stepsX){
-      const cand = { x: box.x + dx, y: box.y + dy, w: box.w, h: box.h };
-      if(cand.x < 0 || cand.y < 0 || cand.x + cand.w > W || cand.y + cand.h > H) continue;
-      if(!others.some(o => boxesTooClose(cand, o.box, MIN_GAP))) return cand;
+// Полный перебор сетки по всему холсту (не только ближним окрестностям) —
+// кандидаты отсортированы по расстоянию от исходной позиции, чтобы сперва
+// пробовать места рядом с тем, что просила модель, но при необходимости
+// честно обойти весь холст, а не "сдаваться" через несколько близких клеток.
+let freeBoxGridCache = null;
+function freeBoxGrid(){
+  if(freeBoxGridCache) return freeBoxGridCache;
+  const step = 40;
+  const grid = [];
+  for(let dy = -Math.ceil(H/step); dy <= Math.ceil(H/step); dy++){
+    for(let dx = -Math.ceil(W/step); dx <= Math.ceil(W/step); dx++){
+      grid.push({ dx: dx*step, dy: dy*step, dist: dx*dx + dy*dy });
     }
   }
-  return box; // некуда поставить без наложения — рисуем как просила модель
+  grid.sort((a,b) => a.dist - b.dist);
+  freeBoxGridCache = grid;
+  return grid;
+}
+function findFreeBox(box, others){
+  if(!others.length || !others.some(o => boxesTooClose(box, o.box, MIN_GAP))) return box;
+  for(const c of freeBoxGrid()){
+    const cand = { x: box.x + c.dx, y: box.y + c.dy, w: box.w, h: box.h };
+    if(cand.x < 0 || cand.y < 0 || cand.x + cand.w > W || cand.y + cand.h > H) continue;
+    if(!others.some(o => boxesTooClose(cand, o.box, MIN_GAP))) return cand;
+  }
+  return box; // совсем некуда — картинка переполнена, разрешаем касание как исключение
 }
 function uniqueId(id){
   let base = String(id || "").replace(/[^\w\-]/g, "") || ("obj" + (++idCounter));
@@ -1297,18 +1475,29 @@ function applyOps(ops){
           const tpl = String(op.template || "");
           if(!TEMPLATES[tpl]) break;
           const id = uniqueId(op.id);
-          const box = findFreeBox(clampBox(op.box || {}), scene);
+          const clamped = clampBox(op.box || {});
+          // stack:true — ребёнок явно просил наложение ("на дереве", "поверх домика"),
+          // доверяем box модели как есть; иначе код сам разводит объекты, чтобы не касались
+          const box = op.stack ? clamped : findFreeBox(clamped, scene);
           const color = typeof op.color === "string" ? op.color : undefined;
-          scene.push({ id, label: String(op.label || ""), box, template: tpl, color, seed: newSeed() });
+          const item = { id, label: String(op.label || ""), box, template: tpl, color, seed: newSeed() };
+          if(op.layer === "back") scene.unshift(item); else scene.push(item);
           changedIds.add(id);
           break;
         }
         case "update": {
           const item = scene.find(o => o.id === op.id);
           if(!item) break;
-          if(op.box) item.box = clampBox(op.box);
+          if(op.box){
+            const clamped = clampBox(op.box);
+            item.box = op.stack ? clamped : findFreeBox(clamped, scene.filter(o => o !== item));
+          }
           if(typeof op.color === "string") item.color = op.color;
           if(typeof op.label === "string" && op.label) item.label = op.label;
+          if(op.layer === "back" || op.layer === "front"){
+            scene.splice(scene.indexOf(item), 1);
+            if(op.layer === "back") scene.unshift(item); else scene.push(item);
+          }
           changedIds.add(item.id);
           break;
         }
@@ -1345,8 +1534,8 @@ function buildPrompt(childPhrase){
 {"say":"короткий ответ по-русски, до 8 слов","ops":[...]}
 
 ops:
-- {"op":"add","id":"...","label":"...","template":"<id из списка ниже>","color":"#hex (необязательно)","box":{"x":..,"y":..,"w":..,"h":..}}
-- {"op":"update","id":"...","box":{...},"color":"#hex","label":"..."}  (любые из полей; шаблон у объекта сменить нельзя — если зверь не тот, сначала remove, потом add заново)
+- {"op":"add","id":"...","label":"...","template":"<id из списка ниже>","color":"#hex (необязательно)","box":{"x":..,"y":..,"w":..,"h":..},"stack":true (необязательно),"layer":"front"|"back" (необязательно)}
+- {"op":"update","id":"...","box":{...},"color":"#hex","label":"...","stack":true (необязательно),"layer":"front"|"back" (необязательно)}  (любые из полей; шаблон у объекта сменить нельзя — если зверь не тот, сначала remove, потом add заново)
 - {"op":"remove","id":"..."}
 - {"op":"clear"}
 - {"op":"undo"}
@@ -1358,15 +1547,20 @@ ${catalog}
 - "template" — обязательно существующий id из списка выше, никаких других значений. Если ничего подходящего нет — не добавляй ops вообще, вежливо объясни в "say" и предложи похожее из списка.
 - "color" — hex, только если ребёнок явно назвал цвет; если цвет не назван — вообще не присылай поле color (шаблон сам возьмёт красивый цвет по умолчанию).
 - Холст 1000×700, начало координат слева сверху, y растёт вниз. Низ стоящих на земле предметов около y=620. Небесные/летающие шаблоны (sun, cloud, rainbow, star, moon, bird, owl, parrot, plane, helicopter, rocket, lightning) — в верхней части, y небольшой.
-- «рядом / справа / слева / сверху / над / под» — относительно существующих объектов из сцены; старайся не перекрывать объекты без явной просьбы (если ошибёшься — код сам раздвинет объекты).
-- Размер box 150–320 по большей стороне, пропорции между объектами разумные (mouse меньше dog, house больше cat). Box не должен выходить за холст.
-- «больше/меньше/передвинь» → update box; «перекрась» → update color; «убери X» → remove; «отмени/назад» → undo; «сотри всё/новый лист» → clear.
+- «рядом / справа / слева / сверху / над / под» — относительно существующих объектов из сцены. По умолчанию объекты НЕ должны касаться друг друга — код сам раздвинет box, если они окажутся слишком близко, и использует весь холст, а не только центр.
+- "stack":true — ставь ТОЛЬКО когда ребёнок явно просит наложение/расположение на другом объекте («посади зайчика НА дерево», «нарисуй кота НА домике», «внутри», «поверх») — тогда код не раздвигает box, и объекты действительно соприкасаются/перекрываются как попросили. Без явной просьбы — не ставь.
+- "layer" — какой объект рисуется поверх: "front" (по умолчанию, рисуется последним — поверх всех) или "back" (рисуется первым — под всеми). Используй при словах «на переднем плане»/«спереди» → front; «на заднем плане»/«сзади» → back. Актуально и для update, если нужно переместить существующий объект в другой слой.
+- Размер box 150–320 по большей стороне, пропорции между объектами разумные (mouse меньше dog, house больше cat). Box не должен выходить за холст. Если на холсте уже тесно и места физически не хватает — ставь box как получится, код в крайнем случае разрешит лёгкое касание, лишь бы не разводить руками бесконечно.
+- «НАРИСУЙ/добавь/ещё ...» — ВСЕГДА add, даже если в сцене уже есть объекты с таким же template и даже таким же цветом. «Нарисуй два розовых дерева», когда на сцене уже есть зелёные деревья, значит добавить ДВА НОВЫХ розовых дерева — старые остаются как были, их трогать нельзя. Никогда не превращай "нарисуй" в update существующего объекта только потому, что в сцене нашёлся подходящий по смыслу template.
+- update (цвет/размер/позиция/слой) — делай ТОЛЬКО когда ребёнок явно указывает на уже нарисованный объект: «перекрась», «сделай больше/меньше», «подвинь», «его/её/это», «предыдущ-ую/-его» — без слова «нарисуй». Если неясно, какой из нескольких одинаковых объектов имеется в виду — выбери последний добавленный с таким label.
+- «убери X» → remove; «отмени/назад» → undo; «сотри всё/новый лист» → clear.
 - Несколько предметов в одной фразе → несколько add.
 - Непонятно, нельзя нарисовать или нет похожего шаблона → без ops, мягко переспроси в "say".
 - Страшное или недетское → нарисуй что-то доброе из списка и мягко скажи об этом.
 
-Пример: ребёнок сказал «рыжая кошечка» →
-{"say":"Вот рыжая кошечка!","ops":[{"op":"add","id":"cat1","label":"кошка","template":"cat","color":"#E8702A","box":{"x":400,"y":380,"w":220,"h":190}}]}`;
+Примеры:
+«рыжая кошечка» → {"say":"Вот рыжая кошечка!","ops":[{"op":"add","id":"cat1","label":"кошка","template":"cat","color":"#E8702A","box":{"x":400,"y":380,"w":220,"h":190}}]}
+«посади зайчика на дерево» (дерево уже есть на сцене с id tree1, box {x:600,y:300,w:200,h:300}) → {"say":"Зайчик забрался на дерево!","ops":[{"op":"add","id":"rabbit1","label":"зайчик","template":"rabbit","box":{"x":650,"y":320,"w":120,"h":110},"stack":true}]}`;
 }
 
 /* ============================================================
@@ -1466,16 +1660,29 @@ function parseModelResponse(text){
 /* ============================================================
    10. ОЗВУЧКА
    ============================================================ */
-function speak(text){
-  if(!text || !("speechSynthesis" in window)) return;
+function speak(text, onEnd){
+  if(!text || !("speechSynthesis" in window)){ if(onEnd) onEnd(); return; }
   try{
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "ru-RU"; u.rate = 1; u.pitch = 1.1;
-    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith("ru"));
+    const voices = speechSynthesis.getVoices();
+    const v = (settings.voiceName && voices.find(v => v.name === settings.voiceName)) || pickBestVoice(voices);
     if(v) u.voice = v;
+    if(onEnd){ u.onend = onEnd; u.onerror = onEnd; }
     speechSynthesis.speak(u);
-  }catch(e){}
+  }catch(e){ if(onEnd) onEnd(); }
+}
+// проигрывает записанные своим голосом клипы по очереди (не одновременно)
+function playVoiceQueue(phrases){
+  if(!phrases.length) return;
+  const [first, ...rest] = phrases;
+  const clip = voiceLib[first];
+  if(!clip){ playVoiceQueue(rest); return; }
+  const audio = new Audio(clip);
+  audio.onended = () => playVoiceQueue(rest);
+  audio.onerror = () => playVoiceQueue(rest);
+  try{ audio.play(); }catch(e){ playVoiceQueue(rest); }
 }
 if("speechSynthesis" in window) speechSynthesis.getVoices();
 
@@ -1486,7 +1693,8 @@ async function handleTemplateRequest(phrase){
   const raw = await callModel(buildPrompt(phrase));
   const parsed = parseModelResponse(raw);
   if(!parsed){
-    setStatus("Не поняла ответ, скажи ещё раз", true);
+    setStatus("Не понял ответ, скажи ещё раз", true);
+    speakPhrase("Не понял ответ, скажи ещё раз");
     return;
   }
   const say = String(parsed.say || "").slice(0, 200);
@@ -1501,19 +1709,28 @@ async function handleTemplateRequest(phrase){
     .filter(Boolean);
   busy = false;               // чтобы applyOps/кнопки обновились корректно
   const changed = ops.length ? applyOps(ops) : false;
-  if(hadUnknownTemplate && !changed) setStatus("Такого я ещё не умею рисовать, попроси другого зверя или предмет", true);
-  else if(say){
+  if(hadUnknownTemplate && !changed){
+    const msg = "Такого я ещё не умею рисовать, попроси другого зверя или предмет";
+    setStatus(msg, true);
+    speakPhrase(msg);
+  }else if(say){
     setStatus(say);
-    speak(addedSounds.length ? say + " " + addedSounds.join(" ") : say);
+    // записанные своим голосом звуки — отдельными клипами; для остальных,
+    // пока не записаны, оставляем старое поведение — TTS читает их текстом
+    const unrecorded = addedSounds.filter(s => !voiceLib[s]);
+    const recorded = addedSounds.filter(s => voiceLib[s]);
+    // звук зверя своим голосом — только ПОСЛЕ того, как бот договорит,
+    // иначе TTS и запись накладываются друг на друга
+    speak(unrecorded.length ? say + " " + unrecorded.join(" ") : say, () => playVoiceQueue(recorded));
   }
-  else setStatus("Готово");
+  else{ setStatus("Готово"); speakPhrase("Готово!"); }
 }
 
 async function handleImageRequest(phrase){
   const dataUrl = await callModelImage(phrase);
   showAiImage(dataUrl);
   setStatus("Готово!");
-  speak("Готово!");
+  if(!speakPhrase("Готово!")) speak("Готово!");
 }
 
 async function handlePhrase(phrase){
@@ -1681,7 +1898,7 @@ document.addEventListener("keyup", e => {
   if(Date.now() - spaceT0 > 500) stopListen(); else switchToTapMode();
   spaceT0 = 0;
 });
-document.addEventListener("keydown", e => { if(e.key === "Escape" && isModalOpen()) closeSettings(); });
+document.addEventListener("keydown", e => { if(e.key === "Escape" && isModalOpen()){ closeSettings(); closeVoiceLib(); } });
 
 if(!SpeechRec){
   setStatus("Этот браузер не умеет слушать. Открой в Chrome или Edge — или напиши словами", true, true);
