@@ -84,6 +84,7 @@
     <button class="tbtn ghost" id="btnNew" disabled>🆕 Новый лист</button>
     <button class="tbtn ghost" id="btnSettings" aria-label="Настройки">⚙</button>
     <button class="tbtn ghost" id="btnVoiceLib" aria-label="Мой голос">🎙</button>
+    <button class="tbtn ghost" id="btnMute" aria-label="Выключить звук">🔊</button>
     <span id="title">Рисовалка</span>
   </div>
 
@@ -198,7 +199,7 @@ syncCanvasWidth();
    2. НАСТРОЙКИ
    ============================================================ */
 const LS_KEY = "drawer_settings_gigachat_v2";
-let settings = { password: "", model: "", mode: "templates", voiceName: "" }; // mode: "templates" | "image"
+let settings = { password: "", model: "", mode: "templates", voiceName: "", muted: false }; // mode: "templates" | "image"
 function loadSettings(){
   try{
     const raw = localStorage.getItem(LS_KEY);
@@ -211,6 +212,17 @@ loadSettings();
 function syncModeButtons(){
   $("modeTemplates").classList.toggle("active", settings.mode !== "image");
   $("modeAI").classList.toggle("active", settings.mode === "image");
+}
+function syncMuteButton(){
+  const btn = $("btnMute");
+  btn.textContent = settings.muted ? "🔇" : "🔊";
+  btn.setAttribute("aria-label", settings.muted ? "Включить звук" : "Выключить звук");
+}
+function toggleMute(){
+  settings.muted = !settings.muted;
+  saveSettings();
+  syncMuteButton();
+  if(settings.muted && "speechSynthesis" in window) speechSynthesis.cancel(); // оборвать то, что уже озвучивается
 }
 function applyModeVisibility(){
   paper.style.display = settings.mode === "image" ? "none" : "block";
@@ -275,8 +287,8 @@ $("voiceTest").onclick = () => {
 /* ---- Библиотека своего голоса: запись фиксированных фраз вместо TTS ---- */
 const VOICE_LS_KEY = "drawer_voice_lib_v1";
 const VOICE_PHRASES = [
-  "Мяу!","Гав-гав!","Пи-пи!","Топ-топ!","Тяв!","У-у-у!","Р-р-р!","Р-р-ры!","Ту-у-у!","Му-у!",
-  "Иго-го!","Хрю-хрю!","Бе-е!","Ме-е-е!","Ква-ква!","Чик-чирик!","Угу-угу!","Попка дурак!","Гу-гу!","Ш-ш-ш!","Га-га-га!","Кря-кря!","Ко-ко-ко!","Пи-пи-пи!","Хи-хи-хи!","Фыр-фыр!","Хрр-хрр!","Ням-ням!","Фр-р-р!",
+  "Мяу!","Гав-гав!","Пи-пи!","Топ-топ!","Тяв!","У-у-у!","Р-р-р!","Р-р-ры!","Р-ры-ы-ы!","Ту-у-у!","Му-у!",
+  "Иго-го!","Хрю-хрю!","Бе-е!","Ме-е-е!","Ква-ква!","Чик-чирик!","Угу-угу!","Попка дурак!","Гу-гу!","Ш-ш-ш!","Га-га-га!","Кря-кря!","Ко-ко-ко!","Пи-пи-пи!","Хи-хи-хи!","Фыр-фыр!","Хрр-хрр!","Ням-ням!","Фр-р-р!","Уфф-уфф!","Щёлк-щёлк!","Хрон-хрон!",
   "Би-би!","Би-биип!","Ту-ту, чух-чух!","Вжжжух!","Тр-р-р-р!","Пуск! Фьюх!",
   "Готово!","Отменил","Новый лист","Сохранено","Нечего отменять",
   "Не понял ответ, скажи ещё раз","Такого я ещё не умею рисовать, попроси другого зверя или предмет"
@@ -291,6 +303,7 @@ loadVoiceLib();
 // Проигрывает свою запись вместо TTS, если она есть. Возвращает true/false,
 // чтобы вызывающий код мог сам решить, нужен ли TTS-фоллбэк для этой фразы.
 function speakPhrase(text){
+  if(settings.muted) return true; // считаем "обработанным" — звука не будет, но и TTS-фоллбэк не нужен
   const clip = voiceLib[text];
   if(!clip) return false;
   try{ new Audio(clip).play(); }catch(e){}
@@ -353,6 +366,8 @@ function renderVoiceLib(){
 function openVoiceLib(){ renderVoiceLib(); $("voiceLibModal").classList.add("show"); }
 function closeVoiceLib(){ stopVoiceRecording(); $("voiceLibModal").classList.remove("show"); }
 $("btnVoiceLib").onclick = openVoiceLib;
+$("btnMute").onclick = toggleMute;
+syncMuteButton();
 $("voiceLibClose").onclick = closeVoiceLib;
 $("voiceLibModal").addEventListener("click", e => { if(e.target.id === "voiceLibModal") closeVoiceLib(); });
 
@@ -853,57 +868,65 @@ function tentacled(o){
   return shapes;
 }
 
+// v2 — из свежего набора шаблонов: глаза на стебельках (отдельные линии +
+// кружки), клешни-полигоны сбоку, ряд ножек-линий снизу
 function crabShapes(color){
-  const shapes = [];
-  const cx=55, cy=55, rx=32, ry=18;
-  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
-  shapes.push({ t:"line", x1:cx-10, y1:cy-ry*0.9, x2:cx-12, y2:cy-ry*1.8, stroke:T_INK, strokeWidth:2 });
-  shapes.push({ t:"line", x1:cx+10, y1:cy-ry*0.9, x2:cx+12, y2:cy-ry*1.8, stroke:T_INK, strokeWidth:2 });
-  shapes.push({ t:"circle", cx:cx-12, cy:cy-ry*1.8, r:4, fill:"#fff" });
-  shapes.push({ t:"circle", cx:cx+12, cy:cy-ry*1.8, r:4, fill:"#fff" });
-  shapes.push({ t:"circle", cx:cx-12, cy:cy-ry*1.8, r:1.8, fill:T_INK });
-  shapes.push({ t:"circle", cx:cx+12, cy:cy-ry*1.8, r:1.8, fill:T_INK });
-  shapes.push({ t:"poly", p:[[cx-rx*0.95,cy-6],[cx-rx*1.5,cy-14],[cx-rx*1.4,cy+2],[cx-rx*1.0,cy+6]], fill:color });
-  shapes.push({ t:"poly", p:[[cx+rx*0.95,cy-6],[cx+rx*1.5,cy-14],[cx+rx*1.4,cy+2],[cx+rx*1.0,cy+6]], fill:color });
-  for(let i=0;i<3;i++){
-    const y1 = cy+ry*0.3+i*6;
-    shapes.push({ t:"line", x1:cx-rx*0.6, y1, x2:cx-rx*1.1-i*4, y2:y1+14, stroke:color, strokeWidth:4 });
-    shapes.push({ t:"line", x1:cx+rx*0.6, y1, x2:cx+rx*1.1+i*4, y2:y1+14, stroke:color, strokeWidth:4 });
-  }
-  return shapes;
+  const light="#F4B7A0";
+  return [
+    { t:"ellipse", cx:50, cy:60, rx:26, ry:18, fill:color },
+    { t:"line", x1:40, y1:46, x2:38, y2:34, stroke:color, strokeWidth:3, thick:true },
+    { t:"line", x1:60, y1:46, x2:62, y2:34, stroke:color, strokeWidth:3, thick:true },
+    { t:"circle", cx:38, cy:32, r:6, fill:"#fff" },
+    { t:"circle", cx:62, cy:32, r:6, fill:"#fff" },
+    { t:"circle", cx:38, cy:32, r:3, fill:T_INK },
+    { t:"circle", cx:62, cy:32, r:3, fill:T_INK },
+    { t:"circle", cx:20, cy:56, r:9, fill:color }, // клешня 1
+    { t:"circle", cx:80, cy:56, r:9, fill:color }, // клешня 2
+    { t:"poly", p:[[14,50],[10,44],[20,50]], fill:color },
+    { t:"poly", p:[[86,50],[90,44],[80,50]], fill:color },
+    { t:"line", x1:32, y1:74, x2:24, y2:88, stroke:color, strokeWidth:3, thick:true }, // ножки
+    { t:"line", x1:44, y1:76, x2:40, y2:90, stroke:color, strokeWidth:3, thick:true },
+    { t:"line", x1:56, y1:76, x2:60, y2:90, stroke:color, strokeWidth:3, thick:true },
+    { t:"line", x1:68, y1:74, x2:76, y2:88, stroke:color, strokeWidth:3, thick:true },
+    { t:"path", d:"M42 64 Q50 70 58 64", fill:"none", stroke:T_INK },
+    { t:"circle", cx:32, cy:64, r:3, fill:light },
+    { t:"circle", cx:68, cy:64, r:3, fill:light }
+  ];
 }
 
+// v2 — из свежего набора шаблонов: простой крестовый узор панциря линиями
+// вместо точек-пятен, 2-тоновый панцирь оставлен (у нас уже был, сохранил)
 function turtleShapes(color){
-  const shapes = [];
-  const cx=55,cy=55,rx=30,ry=20;
-  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:"#3b6b4a" });
-  shapes.push({ t:"ellipse", cx, cy, rx:rx*0.95, ry:ry*0.9, fill:color });
-  [[-10,-6],[10,-6],[0,6],[-16,8],[16,8]].forEach(([dx,dy]) => shapes.push({ t:"circle", cx:cx+dx, cy:cy+dy, r:5, fill:"#3b6b4a" }));
-  shapes.push({ t:"ellipse", cx:cx-rx*1.05, cy:cy+ry*0.1, rx:10, ry:7, fill:color });
-  shapes.push(...faceDots(cx-rx*1.1, cy, 4, 1.8));
-  shapes.push({ t:"poly", p:[[cx-rx*0.7,cy+ry*0.7],[cx-rx*1.0,cy+ry*1.3],[cx-rx*0.4,cy+ry*0.9]], fill:color });
-  shapes.push({ t:"poly", p:[[cx+rx*0.7,cy+ry*0.7],[cx+rx*1.0,cy+ry*1.3],[cx+rx*0.4,cy+ry*0.9]], fill:color });
-  shapes.push({ t:"poly", p:[[cx-rx*0.6,cy-ry*0.7],[cx-rx*0.9,cy-ry*1.2],[cx-rx*0.3,cy-ry*0.9]], fill:color });
-  shapes.push({ t:"poly", p:[[cx+rx*0.6,cy-ry*0.7],[cx+rx*0.9,cy-ry*1.2],[cx+rx*0.3,cy-ry*0.9]], fill:color });
-  return shapes;
+  const shellDark = "#3b6b4a";
+  return [
+    { t:"ellipse", cx:50, cy:60, rx:28, ry:21, fill:shellDark },
+    { t:"ellipse", cx:50, cy:60, rx:28*0.95, ry:21*0.9, fill:color },
+    { t:"circle", cx:25, cy:58, r:9, fill:"#CFE3B1" }, // голова
+    { t:"ellipse", cx:33, cy:79, rx:9, ry:5, fill:"#CFE3B1" }, // передняя лапа
+    { t:"ellipse", cx:67, cy:79, rx:9, ry:5, fill:"#CFE3B1" },
+    { t:"circle", cx:77, cy:59, r:11, fill:"#CFE3B1" }, // задняя лапа/хвостик
+    { t:"circle", cx:74, cy:56, r:2.5, fill:T_INK }, // глаз
+    { t:"line", x1:35, y1:60, x2:65, y2:60, stroke:T_INK, crisp:true }, // узор панциря
+    { t:"line", x1:50, y1:42, x2:50, y2:78, stroke:T_INK, crisp:true }
+  ];
 }
 
+// v2 — из свежего набора шаблонов: отдельный живот-пятно поверх тела
 function frogShapes(color){
-  const shapes = [];
-  const cx=55,cy=62,rx=28,ry=18;
-  shapes.push({ t:"ellipse", cx, cy, rx, ry, fill:color });
-  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:9, fill:color });
-  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:9, fill:color });
-  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:4, fill:"#fff" });
-  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:4, fill:"#fff" });
-  shapes.push({ t:"circle", cx:cx-10, cy:cy-ry*0.95, r:1.8, fill:T_INK });
-  shapes.push({ t:"circle", cx:cx+10, cy:cy-ry*0.95, r:1.8, fill:T_INK });
-  shapes.push(smile(cx, cy-ry*0.3, 12));
-  shapes.push({ t:"poly", p:[[cx-rx*0.8,cy+ry*0.6],[cx-rx*1.3,cy+ry*1.1],[cx-rx*0.9,cy+ry*1.3],[cx-rx*0.5,cy+ry*0.9]], fill:color });
-  shapes.push({ t:"poly", p:[[cx+rx*0.8,cy+ry*0.6],[cx+rx*1.3,cy+ry*1.1],[cx+rx*0.9,cy+ry*1.3],[cx+rx*0.5,cy+ry*0.9]], fill:color });
-  shapes.push({ t:"line", x1:cx-rx*0.6, y1:cy+ry*0.5, x2:cx-rx*0.9, y2:cy+ry*0.9, stroke:color, strokeWidth:5 });
-  shapes.push({ t:"line", x1:cx+rx*0.6, y1:cy+ry*0.5, x2:cx+rx*0.9, y2:cy+ry*0.9, stroke:color, strokeWidth:5 });
-  return shapes;
+  const light="#DFF0B0";
+  return [
+    { t:"ellipse", cx:50, cy:67, rx:25, ry:21, fill:color }, // тело
+    { t:"ellipse", cx:50, cy:46, rx:24, ry:18, fill:color }, // голова
+    { t:"circle", cx:39, cy:29, r:9, fill:color }, // глаза — торчат из головы
+    { t:"circle", cx:61, cy:29, r:9, fill:color },
+    { t:"circle", cx:39, cy:29, r:6, fill:"#fff" },
+    { t:"circle", cx:61, cy:29, r:6, fill:"#fff" },
+    { t:"circle", cx:39, cy:29, r:3, fill:T_INK },
+    { t:"circle", cx:61, cy:29, r:3, fill:T_INK },
+    { t:"ellipse", cx:50, cy:68, rx:14, ry:13, fill:light }, // живот
+    { t:"ellipse", cx:30, cy:79, rx:9, ry:5, fill:color }, // лапы
+    { t:"ellipse", cx:70, cy:79, rx:9, ry:5, fill:color }
+  ];
 }
 
 function snakeShapes(color){
@@ -1262,10 +1285,13 @@ const TEMPLATE_INFO = {
   wolf:"волк, волчонок, волчица",
   bear:"медведь, мишка, медвежонок, мишутка",
   lion:"лев, львёнок, львица",
+  tiger:"тигр, тигрёнок, тигрица",
   elephant:"слон, слонёнок, слоник",
   giraffe:"жираф, жирафик",
   zebra:"зебра, зебрёнок",
   cow:"корова, коровка, бурёнка, телёнок, телёнка",
+  crocodile:"крокодил, крокодильчик, аллигатор",
+  hippo:"бегемот, бегемотик, гиппопотам",
   horse:"лошадь, лошадка, конь, пони, жеребёнок",
   pig:"свинья, свинка, поросёнок, хрюша, хрюшка",
   sheep:"овца, овечка, баран, барашек, ягнёнок",
@@ -1296,6 +1322,7 @@ const TEMPLATE_INFO = {
   jellyfish:"медуза",
   dolphin:"дельфин, дельфинчик",
   whale:"кит, китёнок, китик",
+  seal:"тюлень, тюленёк, нерпа",
   starfish:"морская звезда, морская звёздочка",
   car:"машина, машинка, автомобиль, авто",
   truck:"грузовик, грузовичок",
@@ -1335,29 +1362,43 @@ const TEMPLATE_INFO = {
 // характерный звук — после удачного добавления озвучивается вместе с ответом модели
 const TEMPLATE_SOUND = {
   cat:"Мяу!", dog:"Гав-гав!", mouse:"Пи-пи!", rabbit:"Топ-топ!",
-  fox:"Тяв!", wolf:"У-у-у!", bear:"Р-р-р!", lion:"Р-р-ры!",
-  elephant:"Ту-у-у!", cow:"Му-у!", horse:"Иго-го!", pig:"Хрю-хрю!",
+  fox:"Тяв!", wolf:"У-у-у!", bear:"Р-р-р!", lion:"Р-р-ры!", tiger:"Р-ры-ы-ы!",
+  elephant:"Ту-у-у!", cow:"Му-у!", horse:"Иго-го!", pig:"Хрю-хрю!", crocodile:"Щёлк-щёлк!", hippo:"Хрон-хрон!",
   sheep:"Бе-е!", goat:"Ме-е-е!", frog:"Ква-ква!", bird:"Чик-чирик!", owl:"Угу-угу!",
   parrot:"Попка дурак!", penguin:"Гу-гу!", snake:"Ш-ш-ш!", goose:"Га-га-га!", duck:"Кря-кря!", chicken:"Ко-ко-ко!", chick:"Пи-пи-пи!", labubu:"Хи-хи-хи!",
-  hamster:"Фыр-фыр!", koala:"Хрр-хрр!", panda:"Ням-ням!", deer:"Фр-р-р!",
+  hamster:"Фыр-фыр!", koala:"Хрр-хрр!", panda:"Ням-ням!", deer:"Фр-р-р!", seal:"Уфф-уфф!",
   car:"Би-би!", truck:"Би-биип!", bus:"Би-би!", train:"Ту-ту, чух-чух!",
   plane:"Вжжжух!", helicopter:"Тр-р-р-р!", boat:"Ту-у-у!", rocket:"Пуск! Фьюх!"
 };
 
-function elephantShapes(color){
+// v3 — из свежего набора шаблонов (deepseek): 2 отдельных уха-эллипса по
+// бокам головы (не над/за ней), маленький хобот одним коротким path
+// v4 — 3/4 профиль вместо анфас-"эмодзи": голова смещена вправо относительно
+// тела (не по центру), хобот уходит в сторону, ближнее ухо крупнее дальнего —
+// это и даёт мгновенное "слон", а не серый медведь
+// v5 — хобот был тонкой path-линией, "висел ниткой". Теперь это замкнутый
+// толстый poly (кусок тела, изгибающийся вниз), плюс отдельная ellipse-кончик
+function elephantShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#DCE3E0", inner="#C5D0CC";
+  const bodyRX=27*j(), bodyRY=22*j();
   return [
-    { t:"ellipse", cx:58, cy:58, rx:34, ry:24, fill:color },
-    // ухо раньше почти полностью совпадало с головой по месту и цвету —
-    // физически было в коде, но визуально неразличимо ("слон без ушей").
-    // Подвинул крупнее и выше — заметная часть торчит над/за головой.
-    { t:"ellipse", cx:4, cy:30, rx:18, ry:22, fill:color }, // ухо 1 — ближнее, крупное
-    { t:"ellipse", cx:38, cy:22, rx:13, ry:16, fill:color }, // ухо 2 — дальнее, выглядывает из-за головы сверху-сзади
-    { t:"circle", cx:24, cy:46, r:19, fill:color },
-    { t:"path", d:"M11 55 Q4 75 13 88", fill:"none", stroke:color, strokeWidth:9 },
-    ...legShapes(4, 28, 56, 76, "short", color),
-    { t:"line", x1:92, y1:52, x2:99, y2:62, stroke:color, strokeWidth:5 },
-    ...faceDots(21,42,5,2.6),
-    smile(21,52,6)
+    { t:"ellipse", cx:37, cy:78, rx:7, ry:10, fill:color }, // дальние ноги
+    { t:"ellipse", cx:57, cy:80, rx:7, ry:10, fill:color },
+    { t:"ellipse", cx:48, cy:63, rx:bodyRX, ry:bodyRY, fill:color }, // тело — массивное
+    { t:"ellipse", cx:61, cy:46, rx:18, ry:21, fill:color }, // задняя часть головы
+    { t:"ellipse", cx:55, cy:43, rx:18, ry:22, fill:color }, // большое ухо
+    { t:"ellipse", cx:55, cy:43, rx:13, ry:17, fill:inner },
+    { t:"ellipse", cx:68, cy:43, rx:18, ry:17, fill:color }, // голова, смещённая вправо
+    { t:"ellipse", cx:79, cy:49, rx:12, ry:10, fill:light }, // щека/морда
+    { t:"ellipse", cx:70, cy:39, rx:3.5, ry:4, fill:T_INK }, // глаз
+    { t:"circle", cx:69, cy:38, r:1.2, fill:"#fff" },
+    { t:"poly", p:[[84,49],[91,51],[92,56],[90,62],[87,68],[82,68],[84,62],[86,57],[84,54]], fill:color }, // хобот — цельная толстая форма, не нитка
+    { t:"ellipse", cx:86, cy:67, rx:5, ry:4, fill:color }, // кончик хобота
+    { t:"ellipse", cx:50, cy:80, rx:7, ry:11, fill:color }, // ближние ноги
+    { t:"ellipse", cx:67, cy:80, rx:7, ry:11, fill:color },
+    { t:"ellipse", cx:50, cy:89, rx:7, ry:3, fill:light }, // стопы
+    { t:"ellipse", cx:67, cy:89, rx:7, ry:3, fill:light }
   ];
 }
 
@@ -1760,7 +1801,8 @@ function foxShapes(color, seed){
   const rng = rngFromSeed(seed);
   const j = () => 0.92 + rng()*0.16;
   const tip = "#fff";
-  if(rng() < 0.5){
+  const poseRoll = rng();
+  if(poseRoll < 0.34){
     // v2: раньше голова/лапы/хвост стояли в ряд как отдельные бусины —
     // читалось как гусеница. Теперь всё кластеризовано вокруг одного торса
     // с явным перекрытием (голова наезжает на тело, лапы — внахлёст у краёв).
@@ -1784,55 +1826,424 @@ function foxShapes(color, seed){
       { t:"circle", cx:hcx-headR*0.4, cy:hcy-headR*0.25, r:2, fill:T_INK } // глаз — без отдельной улыбки, с острой мордой она лишняя
     ];
   }
-  const bodyRX=30*j(), bodyRY=18*j();
-  const bcx=52, bcy=66, headR=15*j();
-  const hcx=86, hcy=bcy-bodyRY*0.7;
+  if(poseRoll < 0.67){
+    const bodyRX=30*j(), bodyRY=18*j();
+    const bcx=52, bcy=66, headR=15*j();
+    const hcx=86, hcy=bcy-bodyRY*0.7;
+    return [
+      { t:"ellipse", cx:bcx-bodyRX*1.3, cy:bcy-bodyRY*0.1, rx:bodyRX*0.5, ry:bodyRY*0.65, fill:color }, // хвост — пушистый овал, не острый клин (иначе читается как клюв)
+      { t:"ellipse", cx:bcx-bodyRX*1.6, cy:bcy-bodyRY*0.05, rx:bodyRX*0.22, ry:bodyRY*0.3, fill:tip }, // белый кончик хвоста — внутри овала
+      ...legShapes(4, bcx-bodyRX*0.8, bodyRX*1.6, bcy+bodyRY*0.6, "medium", color),
+      { t:"ellipse", cx:bcx, cy:bcy, rx:bodyRX, ry:bodyRY, fill:color }, // тело на четырёх лапах
+      { t:"ellipse", cx:bcx+4, cy:bcy+bodyRY*0.5, rx:bodyRX*0.6, ry:bodyRY*0.4, fill:tip }, // белая грудка/живот
+      { t:"circle", cx:hcx, cy:hcy, r:headR, fill:color }, // голова
+      { t:"poly", p:[[hcx+headR*1.1,hcy+headR*0.2],[hcx+headR*1.9,hcy+headR*0.35],[hcx+headR*0.7,hcy-headR*0.15]], fill:color }, // острая морда — вправо
+      { t:"poly", p:[[hcx-headR*0.55,hcy-headR*0.75],[hcx-headR*0.9,hcy-headR*1.7],[hcx-headR*0.05,hcy-headR*0.95]], fill:color }, // ухо 1
+      { t:"poly", p:[[hcx+headR*0.1,hcy-headR*0.95],[hcx+headR*0.4,hcy-headR*1.75],[hcx+headR*0.6,hcy-headR*0.6]], fill:color }, // ухо 2
+      { t:"circle", cx:hcx+headR*1.55, cy:hcy+headR*0.2, r:1.8, fill:T_INK }, // носик
+      { t:"circle", cx:hcx+headR*0.35, cy:hcy-headR*0.25, r:2, fill:T_INK } // глаз — без отдельной улыбки, с острой мордой она лишняя
+    ];
+  }
+  // поза 3 — из свежего набора шаблонов: сидит анфас (не в профиль), круглая
+  // голова с двуцветными ушами, хвост виден сбоку целиком
+  const light="#FFF0D8", inner="#E99B82";
+  const headR2=20*j();
   return [
-    { t:"ellipse", cx:bcx-bodyRX*1.3, cy:bcy-bodyRY*0.1, rx:bodyRX*0.5, ry:bodyRY*0.65, fill:color }, // хвост — пушистый овал, не острый клин (иначе читается как клюв)
-    { t:"ellipse", cx:bcx-bodyRX*1.6, cy:bcy-bodyRY*0.05, rx:bodyRX*0.22, ry:bodyRY*0.3, fill:tip }, // белый кончик хвоста — внутри овала
-    ...legShapes(4, bcx-bodyRX*0.8, bodyRX*1.6, bcy+bodyRY*0.6, "medium", color),
-    { t:"ellipse", cx:bcx, cy:bcy, rx:bodyRX, ry:bodyRY, fill:color }, // тело на четырёх лапах
-    { t:"ellipse", cx:bcx+4, cy:bcy+bodyRY*0.5, rx:bodyRX*0.6, ry:bodyRY*0.4, fill:tip }, // белая грудка/живот
-    { t:"circle", cx:hcx, cy:hcy, r:headR, fill:color }, // голова
-    { t:"poly", p:[[hcx+headR*1.1,hcy+headR*0.2],[hcx+headR*1.9,hcy+headR*0.35],[hcx+headR*0.7,hcy-headR*0.15]], fill:color }, // острая морда — вправо
-    { t:"poly", p:[[hcx-headR*0.55,hcy-headR*0.75],[hcx-headR*0.9,hcy-headR*1.7],[hcx-headR*0.05,hcy-headR*0.95]], fill:color }, // ухо 1
-    { t:"poly", p:[[hcx+headR*0.1,hcy-headR*0.95],[hcx+headR*0.4,hcy-headR*1.75],[hcx+headR*0.6,hcy-headR*0.6]], fill:color }, // ухо 2
-    { t:"circle", cx:hcx+headR*1.55, cy:hcy+headR*0.2, r:1.8, fill:T_INK }, // носик
-    { t:"circle", cx:hcx+headR*0.35, cy:hcy-headR*0.25, r:2, fill:T_INK } // глаз — без отдельной улыбки, с острой мордой она лишняя
+    { t:"ellipse", cx:50, cy:68, rx:23*j(), ry:23*j(), fill:color }, // тело
+    { t:"poly", p:[[34,34],[30,17],[43,28]], fill:color }, // ухо 1
+    { t:"poly", p:[[34,31],[32,21],[40,29]], fill:inner },
+    { t:"poly", p:[[66,34],[70,17],[57,28]], fill:color }, // ухо 2
+    { t:"poly", p:[[66,31],[68,21],[60,29]], fill:inner },
+    { t:"circle", cx:50, cy:44, r:headR2, fill:color }, // голова — анфас
+    { t:"ellipse", cx:50, cy:52, rx:11, ry:13, fill:light }, // морда
+    { t:"circle", cx:42, cy:42, r:3, fill:T_INK }, // глаза
+    { t:"circle", cx:58, cy:42, r:3, fill:T_INK },
+    { t:"circle", cx:50, cy:58, r:3, fill:T_INK }, // нос
+    { t:"ellipse", cx:77, cy:70, rx:15, ry:9, fill:color }, // хвост сбоку
+    { t:"ellipse", cx:85, cy:70, rx:6, ry:7, fill:light },
+    { t:"ellipse", cx:38, cy:84, rx:7, ry:4, fill:color }, // лапы
+    { t:"ellipse", cx:62, cy:84, rx:7, ry:4, fill:color }
   ];
 }
 
-// v2: на скрине читался как "тело медведя с шипами" — плоский овал-"блин" с
-// полностью открытыми лапами-палочками и длинной мышиной мордой. Теперь тело
-// компактнее/круглее, лапки нарисованы ДО тела и почти целиком им перекрыты
-// (видны только кончики снизу), мордочка — короткая тупая, а не вытянутая.
+// v3 — из свежего набора шаблонов: тело ЦЕЛИКОМ тёмное (цвет колючек), а не
+// светлый купол со вставленными треугольниками — так силуэт сразу читается
+// как ёж, а не "медведь с шипами"; иглы — веер коротких треугольников сзади
 function hedgehogShapes(color, seed){
-  const rng = rngFromSeed(seed);
-  const j = () => 0.92 + rng()*0.16;
-  const bellyColor = "#F2E0C9";
-  const quillColor = "#6B4A33";
-  const bcx=55, bcy=65, brx=26*j(), bry=23*j();
-  const feetY = bcy + bry*1.05;
-  const feet = [-0.52,-0.2,0.2,0.52].map(k => ({ t:"ellipse", cx:bcx+brx*k, cy:feetY, rx:4.6, ry:4, fill:quillColor }));
-  const quills = [];
-  const n = 22;
-  for(let i=0;i<n;i++){
-    const t = i/(n-1);
-    const ang = Math.PI + t*Math.PI; // верхняя дуга тела: слева → вверх → справа
-    const ang2 = Math.PI + Math.min(1, (i+0.5)/(n-1)) * Math.PI;
-    const bx1 = bcx + Math.cos(ang)*brx*0.98, by1 = bcy + Math.sin(ang)*bry*0.98;
-    const bx2 = bcx + Math.cos(ang2)*brx*0.98, by2 = bcy + Math.sin(ang2)*bry*0.98;
-    const tx = bcx + Math.cos(ang)*brx*1.42, ty = bcy + Math.sin(ang)*bry*1.58;
-    quills.push({ t:"poly", p:[[bx1,by1],[bx2,by2],[tx,ty]], fill:quillColor });
-  }
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#EFD0A8";
+  const bodyRX=28*j(), bodyRY=23*j();
   return [
-    ...feet, // лапки — рисуются ПЕРВЫМИ, тело их почти полностью перекроет
-    { t:"ellipse", cx:bcx, cy:bcy, rx:brx, ry:bry, fill:color }, // тело — компактный купол, не плоский блин
-    ...quills,
-    { t:"ellipse", cx:bcx-brx*0.05, cy:bcy+bry*0.7, rx:brx*0.7, ry:bry*0.4, fill:bellyColor }, // светлый животик снизу
-    { t:"ellipse", cx:bcx-brx*0.95, cy:bcy+bry*0.2, rx:brx*0.24, ry:bry*0.24, fill:bellyColor }, // короткая тупая мордочка — не вытянутая
-    { t:"circle", cx:bcx-brx*1.14, cy:bcy+bry*0.18, r:2.6, fill:T_INK }, // носик-пуговка
-    { t:"circle", cx:bcx-brx*0.78, cy:bcy-bry*0.08, r:2, fill:T_INK } // глаз
+    { t:"ellipse", cx:50, cy:63, rx:bodyRX, ry:bodyRY, fill:color }, // тело — цвет запроса, а не зафиксированный тёмный
+    { t:"poly", p:[[27,53],[22,45],[31,48]], fill:color }, // иглы
+    { t:"poly", p:[[34,45],[31,36],[39,43]], fill:color },
+    { t:"poly", p:[[43,41],[42,31],[49,40]], fill:color },
+    { t:"poly", p:[[52,40],[56,30],[58,41]], fill:color },
+    { t:"poly", p:[[61,43],[69,35],[67,47]], fill:color },
+    { t:"poly", p:[[69,48],[80,44],[73,54]], fill:color },
+    { t:"ellipse", cx:72, cy:59, rx:16, ry:14, fill:light }, // мордочка — светлая
+    { t:"circle", cx:62, cy:47, r:6, fill:light }, // ухо
+    { t:"circle", cx:72, cy:55, r:3, fill:T_INK }, // глаз
+    { t:"circle", cx:85, cy:60, r:4, fill:T_INK }, // нос
+    { t:"ellipse", cx:42, cy:82, rx:7, ry:4, fill:light }, // ноги
+    { t:"ellipse", cx:62, cy:82, rx:7, ry:4, fill:light }
+  ];
+}
+
+// свинья — bespoke вместо generic quadruped(snout:true): огромный пятачок —
+// главная фишка, уши-поли, пятачок крупнее, чем у любого другого носатого
+function pigShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#F8B9BD";
+  const bodyRX=24*j(), bodyRY=22*j(), headR=21*j();
+  return [
+    { t:"ellipse", cx:50, cy:66, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"poly", p:[[31,28],[43,22],[40,36]], fill:color }, // ухо 1
+    { t:"poly", p:[[69,28],[57,22],[60,36]], fill:color }, // ухо 2
+    { t:"circle", cx:50, cy:43, r:headR, fill:color }, // голова
+    { t:"circle", cx:42, cy:41, r:3, fill:T_INK }, // глаза
+    { t:"circle", cx:58, cy:41, r:3, fill:T_INK },
+    { t:"ellipse", cx:50, cy:52, rx:11, ry:7, fill:light }, // пятачок — главная фишка
+    { t:"ellipse", cx:46, cy:52, rx:2, ry:3, fill:T_INK }, // ноздри
+    { t:"ellipse", cx:54, cy:52, rx:2, ry:3, fill:T_INK },
+    { t:"ellipse", cx:38, cy:83, rx:6, ry:5, fill:color }, // ноги
+    { t:"ellipse", cx:62, cy:83, rx:6, ry:5, fill:color }
+  ];
+}
+
+// v2 — 3/4 профиль вместо анфас: лицо и грива смещены вправо относительно
+// тела, вытянутая морда, грива — часть массы головы (не идеальный ореол).
+// Грива по-прежнему сплошная заливка круга (не радиальные штрихи) — без
+// пробелов, т.к. это просто круг.
+function lionShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const mane="#D99A42", light="#F5D79B", inner="#B87532";
+  const bodyRX=25*j(), bodyRY=21*j(), maneR=25*j();
+  return [
+    { t:"ellipse", cx:48, cy:68, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"ellipse", cx:36, cy:83, rx:6, ry:9, fill:color }, // дальние ноги
+    { t:"ellipse", cx:56, cy:84, rx:6, ry:9, fill:color },
+    { t:"circle", cx:61, cy:43, r:maneR, fill:mane }, // грива — не идеальный ореол вокруг центра, часть массы головы справа
+    { t:"circle", cx:46, cy:28, r:8, fill:mane }, // уши
+    { t:"circle", cx:70, cy:27, r:8, fill:mane },
+    { t:"circle", cx:46, cy:28, r:4, fill:inner },
+    { t:"circle", cx:70, cy:27, r:4, fill:inner },
+    { t:"ellipse", cx:65, cy:44, rx:17, ry:18, fill:light }, // лицо — смещено вправо
+    { t:"ellipse", cx:77, cy:51, rx:12, ry:9, fill:light }, // вытянутая морда
+    { t:"circle", cx:69, cy:40, r:3.5, fill:T_INK }, // глаз
+    { t:"circle", cx:68, cy:39, r:1.2, fill:"#fff" },
+    { t:"ellipse", cx:86, cy:52, rx:4, ry:3, fill:T_INK }, // нос
+    { t:"line", x1:86, y1:54, x2:83, y2:58, stroke:T_INK, strokeWidth:2, crisp:true }, // рот
+    { t:"ellipse", cx:50, cy:83, rx:7, ry:10, fill:color }, // ближние ноги
+    { t:"ellipse", cx:67, cy:82, rx:7, ry:10, fill:color },
+    { t:"ellipse", cx:50, cy:90, rx:7, ry:3, fill:light }, // лапы
+    { t:"ellipse", cx:67, cy:89, rx:7, ry:3, fill:light }
+  ];
+}
+
+// пингвин — bespoke вместо generic birdBase(): двухслойные глаза (белый диск
+// + тёмный зрачок), клюв-поли, живот-эллипс поверх тела
+function penguinShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const white="#FFF8EA", orange="#E69A45";
+  const bodyRX=23*j(), bodyRY=29*j(), headR=19*j();
+  return [
+    { t:"ellipse", cx:50, cy:64, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"circle", cx:50, cy:40, r:headR, fill:color }, // голова
+    { t:"ellipse", cx:50, cy:64, rx:bodyRX*0.6, ry:bodyRY*0.76, fill:white }, // живот
+    { t:"circle", cx:43, cy:39, r:3, fill:white }, // глаза
+    { t:"circle", cx:57, cy:39, r:3, fill:white },
+    { t:"circle", cx:43, cy:39, r:1.5, fill:T_INK },
+    { t:"circle", cx:57, cy:39, r:1.5, fill:T_INK },
+    { t:"poly", p:[[46,46],[54,46],[50,52]], fill:orange }, // клюв
+    { t:"ellipse", cx:38, cy:89, rx:9, ry:4, fill:orange }, // лапы
+    { t:"ellipse", cx:62, cy:89, rx:9, ry:4, fill:orange }
+  ];
+}
+
+// лошадь — полностью bespoke (вместо quadruped+headStyle:"muzzle"): грива
+// одним path вдоль шеи, отдельная чёлка, профильная голова, копыта-эллипсы
+function horseShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const mane="#5A3A22", light="#F3D9B5", dark="#3A2A20";
+  const bodyRX=26*j(), bodyRY=18*j();
+  return [
+    { t:"path", d:"M76 52 Q94 58 92 84 Q86 74 78 70", fill:mane }, // грива вдоль шеи
+    { t:"line", x1:66, y1:74, x2:64, y2:90, stroke:color, strokeWidth:6, thick:true }, // задние ноги
+    { t:"line", x1:74, y1:74, x2:76, y2:90, stroke:color, strokeWidth:6, thick:true },
+    { t:"ellipse", cx:54, cy:64, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"line", x1:36, y1:74, x2:34, y2:90, stroke:color, strokeWidth:6, thick:true }, // передние ноги
+    { t:"line", x1:44, y1:74, x2:46, y2:90, stroke:color, strokeWidth:6, thick:true },
+    { t:"ellipse", cx:34, cy:91, rx:4, ry:2.5, fill:dark }, // копыта
+    { t:"ellipse", cx:46, cy:91, rx:4, ry:2.5, fill:dark },
+    { t:"ellipse", cx:64, cy:91, rx:4, ry:2.5, fill:dark },
+    { t:"ellipse", cx:76, cy:91, rx:4, ry:2.5, fill:dark },
+    { t:"poly", p:[[30,66],[26,38],[40,34],[46,62]], fill:color }, // шея
+    { t:"ellipse", cx:30, cy:30, rx:11, ry:13, fill:color }, // голова в профиль
+    { t:"ellipse", cx:22, cy:36, rx:7, ry:9, fill:light }, // морда
+    { t:"poly", p:[[33,20],[37,10],[42,22]], fill:color }, // ухо
+    { t:"poly", p:[[34,20],[37,13],[40,21]], fill:light },
+    { t:"path", d:"M38 20 Q52 26 50 40 Q46 52 42 62", fill:"none", stroke:mane, strokeWidth:9, thick:true }, // грива вдоль головы/шеи
+    { t:"path", d:"M34 18 Q28 22 26 30", fill:"none", stroke:mane, strokeWidth:6, thick:true }, // чёлка
+    { t:"circle", cx:28, cy:28, r:2.5, fill:dark }, // глаз
+    { t:"circle", cx:18, cy:38, r:1.5, fill:dark }, // ноздря
+    { t:"path", d:"M16 42 Q22 46 28 42", fill:"none", stroke:dark } // рот
+  ];
+}
+
+// дельфин — bespoke вместо generic fishBase(curvedBody+beak): плавники-поли,
+// светлое пятно-бок, улыбка path
+function dolphinShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#DDF0F5";
+  const bodyRX=28*j(), bodyRY=18*j();
+  return [
+    { t:"ellipse", cx:50, cy:60, rx:bodyRX, ry:bodyRY, fill:color }, // тело-торпеда
+    { t:"poly", p:[[74,60],[92,48],[92,72]], fill:color }, // хвост
+    { t:"poly", p:[[44,42],[52,28],[58,44]], fill:color }, // спинной плавник
+    { t:"poly", p:[[44,68],[34,80],[52,76]], fill:color }, // боковой плавник
+    { t:"ellipse", cx:26, cy:62, rx:12, ry:8, fill:light }, // светлый бок/мордочка
+    { t:"circle", cx:34, cy:56, r:3, fill:T_INK }, // глаз
+    { t:"path", d:"M22 64 Q30 68 38 64", fill:"none", stroke:T_INK }, // улыбка
+    { t:"ellipse", cx:48, cy:50, rx:14, ry:4, fill:"#fff" } // блик на спине
+  ];
+}
+
+// кит — bespoke вместо generic fishBase(curvedBody+spout): фонтан двумя
+// тонкими path, живот-полоса
+function whaleShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#CFE6F0";
+  const bodyRX=32*j(), bodyRY=22*j();
+  return [
+    { t:"ellipse", cx:48, cy:58, rx:bodyRX, ry:bodyRY, fill:color }, // огромное тело
+    { t:"poly", p:[[78,58],[94,42],[94,74]], fill:color }, // хвост
+    { t:"poly", p:[[42,72],[30,86],[54,80]], fill:color }, // плавник
+    { t:"ellipse", cx:48, cy:68, rx:24, ry:8, fill:light }, // брюхо-полоса
+    { t:"circle", cx:30, cy:54, r:3, fill:T_INK }, // глаза
+    { t:"circle", cx:50, cy:54, r:3, fill:T_INK },
+    { t:"path", d:"M28 38 Q26 24 22 18", fill:"none", stroke:light }, // фонтан
+    { t:"path", d:"M28 38 Q30 22 36 18", fill:"none", stroke:light },
+    { t:"ellipse", cx:40, cy:44, rx:10, ry:3, fill:"#fff" } // блик
+  ];
+}
+
+// тюлень — новый зверь: тело-сосиска, усы линиями, ласты-поли
+function sealShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#EFE0D3";
+  const bodyRX=30*j(), headR=15*j();
+  return [
+    { t:"ellipse", cx:52, cy:66, rx:bodyRX, ry:18, fill:color }, // тело-сосиска
+    { t:"circle", cx:26, cy:52, r:headR, fill:color }, // голова
+    { t:"poly", p:[[80,66],[94,58],[94,74]], fill:color }, // хвостовой ласт
+    { t:"ellipse", cx:44, cy:82, rx:8, ry:5, fill:color }, // ласты
+    { t:"ellipse", cx:62, cy:82, rx:8, ry:5, fill:color },
+    { t:"ellipse", cx:20, cy:54, rx:7, ry:5, fill:light }, // мордочка
+    { t:"circle", cx:22, cy:48, r:2.5, fill:T_INK }, // глаза
+    { t:"circle", cx:32, cy:48, r:2.5, fill:T_INK },
+    { t:"circle", cx:16, cy:54, r:2, fill:T_INK }, // нос
+    { t:"line", x1:12, y1:54, x2:20, y2:53, stroke:T_INK, crisp:true }, // усы
+    { t:"line", x1:12, y1:56, x2:20, y2:56, stroke:T_INK, crisp:true }
+  ];
+}
+
+// осьминог — bespoke вместо generic tentacled(arms:8,face:true): щупальца
+// отдельными path-дугами разной формы, а не равномерным веером
+function octopusShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#F4C9D2", dark="#4A2F3A";
+  const headR=24*j();
+  return [
+    { t:"circle", cx:50, cy:42, r:headR, fill:color }, // голова-шар
+    { t:"path", d:"M28 60 Q16 76 24 90", fill:"none", stroke:color, strokeWidth:7, thick:true }, // щупальца
+    { t:"path", d:"M40 64 Q34 80 40 92", fill:"none", stroke:color, strokeWidth:7, thick:true },
+    { t:"path", d:"M50 66 Q50 82 50 92", fill:"none", stroke:color, strokeWidth:7, thick:true },
+    { t:"path", d:"M60 64 Q66 80 60 92", fill:"none", stroke:color, strokeWidth:7, thick:true },
+    { t:"path", d:"M72 60 Q84 76 76 90", fill:"none", stroke:color, strokeWidth:7, thick:true },
+    { t:"circle", cx:40, cy:40, r:7, fill:"#fff" }, // глаза
+    { t:"circle", cx:60, cy:40, r:7, fill:"#fff" },
+    { t:"circle", cx:40, cy:40, r:3.5, fill:dark },
+    { t:"circle", cx:60, cy:40, r:3.5, fill:dark },
+    { t:"circle", cx:28, cy:50, r:4, fill:light }, // румянец
+    { t:"circle", cx:72, cy:50, r:4, fill:light }
+  ];
+}
+
+// тигр — НЕ анфас: идёт вправо, профиль/3-4. Голова смещена к переднему
+// краю тела (не по центру), полосы отдельными короткими штрихами по голове/
+// телу/хвосту — узнаваемый силуэт "идущего зверя", а не круглая маска
+// v2 — старый тигр был "лев без гривы + полоски". Теперь: низкое вытянутое
+// тело (не стоит вертикально, как собака), большая треугольная кошачья
+// голова, белые щёки — главная опознавательная черта тигра, кольчатый
+// хвост, полосы — часть формы головы/тела, БЕЗ улыбки (морда собрана из
+// форм, не нарисована как смайлик)
+function tigerShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#FFF0D2", stripe="#493A35", inner="#D88978";
+  const bodyRX=28*j(), bodyRY=20*j();
+  return [
+    { t:"ellipse", cx:27, cy:67, rx:20, ry:8, fill:color }, // хвост — сначала, уходит за тело
+    { t:"ellipse", cx:16, cy:58, rx:8, ry:14, fill:color },
+    { t:"line", x1:13, y1:51, x2:20, y2:54, stroke:stripe, strokeWidth:4, crisp:true, thick:true }, // кольца хвоста
+    { t:"line", x1:10, y1:59, x2:18, y2:62, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"line", x1:12, y1:68, x2:20, y2:67, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"ellipse", cx:49, cy:65, rx:bodyRX, ry:bodyRY, fill:color }, // тело — широкое и низкое
+    { t:"ellipse", cx:58, cy:68, rx:13, ry:14, fill:light }, // светлый живот
+    { t:"ellipse", cx:39, cy:80, rx:6, ry:9, fill:color }, // дальние лапы
+    { t:"ellipse", cx:57, cy:81, rx:6, ry:9, fill:color },
+    { t:"ellipse", cx:66, cy:51, rx:15, ry:18, fill:color }, // шея
+    { t:"ellipse", cx:70, cy:39, rx:19, ry:17, fill:color }, // голова — крупная кошачья
+    { t:"poly", p:[[57,29],[58,17],[67,25]], fill:color }, // дальнее ухо — кошачье, не собачье
+    { t:"poly", p:[[59,27],[60,21],[64,25]], fill:inner },
+    { t:"poly", p:[[73,27],[79,15],[85,27]], fill:color }, // ближнее ухо
+    { t:"poly", p:[[76,25],[79,20],[82,26]], fill:inner },
+    { t:"ellipse", cx:78, cy:47, rx:12, ry:9, fill:light }, // белые щёки — важная часть тигра
+    { t:"ellipse", cx:87, cy:48, rx:9, ry:7, fill:light },
+    { t:"ellipse", cx:75, cy:37, rx:4, ry:5, fill:T_INK }, // глаз
+    { t:"circle", cx:74, cy:36, r:1.5, fill:"#fff" },
+    { t:"ellipse", cx:92, cy:47, rx:4, ry:3, fill:T_INK }, // нос
+    { t:"line", x1:64, y1:27, x2:67, y2:34, stroke:stripe, strokeWidth:3, crisp:true, thick:true }, // полосы на лбу
+    { t:"line", x1:70, y1:24, x2:71, y2:33, stroke:stripe, strokeWidth:3, crisp:true, thick:true },
+    { t:"line", x1:77, y1:23, x2:75, y2:33, stroke:stripe, strokeWidth:3, crisp:true, thick:true },
+    { t:"line", x1:82, y1:39, x2:87, y2:42, stroke:stripe, strokeWidth:3, crisp:true, thick:true }, // полосы на щеках
+    { t:"line", x1:83, y1:44, x2:90, y2:46, stroke:stripe, strokeWidth:3, crisp:true, thick:true },
+    { t:"line", x1:32, y1:53, x2:41, y2:58, stroke:stripe, strokeWidth:4, crisp:true, thick:true }, // полосы на теле
+    { t:"line", x1:29, y1:60, x2:39, y2:63, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"line", x1:29, y1:68, x2:39, y2:68, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"line", x1:39, y1:49, x2:46, y2:54, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"line", x1:52, y1:48, x2:56, y2:55, stroke:stripe, strokeWidth:4, crisp:true, thick:true }, // полосы на бёдрах
+    { t:"line", x1:59, y1:47, x2:62, y2:54, stroke:stripe, strokeWidth:4, crisp:true, thick:true },
+    { t:"ellipse", cx:51, cy:81, rx:7, ry:10, fill:color }, // ближние лапы
+    { t:"ellipse", cx:69, cy:80, rx:7, ry:10, fill:color },
+    { t:"ellipse", cx:51, cy:89, rx:8, ry:3, fill:light }, // лапы
+    { t:"ellipse", cx:69, cy:88, rx:8, ry:3, fill:light }
+  ];
+}
+
+// волк — bespoke вместо generic quadruped(snout:true): острая узкая морда
+// (не круглая, как у собаки), высокие треугольные уши, более вытянутое тело
+function wolfShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#E9E5DF", inner="#C7B5B0";
+  const bodyRX=28*j(), bodyRY=21*j();
+  return [
+    { t:"ellipse", cx:25, cy:64, rx:19, ry:10, fill:color }, // хвост — большой, пушистый
+    { t:"ellipse", cx:16, cy:60, rx:10, ry:8, fill:light },
+    { t:"ellipse", cx:41, cy:79, rx:6, ry:11, fill:color }, // дальние ноги
+    { t:"ellipse", cx:59, cy:80, rx:6, ry:11, fill:color },
+    { t:"ellipse", cx:49, cy:63, rx:bodyRX, ry:bodyRY, fill:color }, // тело — вытянутое
+    { t:"ellipse", cx:60, cy:65, rx:12, ry:17, fill:light }, // светлая грудь
+    { t:"ellipse", cx:65, cy:50, rx:15, ry:18, fill:color }, // шея
+    { t:"ellipse", cx:69, cy:38, rx:18, ry:17, fill:color }, // голова
+    { t:"poly", p:[[57,29],[58,14],[67,26]], fill:color }, // дальнее ухо — высокое, треугольное
+    { t:"poly", p:[[59,27],[60,19],[64,26]], fill:inner },
+    { t:"poly", p:[[72,27],[78,12],[86,28]], fill:color }, // ближнее ухо
+    { t:"poly", p:[[75,26],[78,18],[82,27]], fill:inner },
+    { t:"ellipse", cx:81, cy:46, rx:14, ry:10, fill:light }, // вытянутая узкая морда — не круглая, как у собаки
+    { t:"ellipse", cx:90, cy:48, rx:8, ry:6, fill:light },
+    { t:"ellipse", cx:74, cy:36, rx:4, ry:4, fill:T_INK }, // глаз
+    { t:"circle", cx:73, cy:35, r:1.2, fill:"#fff" },
+    { t:"ellipse", cx:96, cy:48, rx:4, ry:3, fill:T_INK }, // нос
+    { t:"ellipse", cx:51, cy:80, rx:7, ry:11, fill:color }, // ближние ноги
+    { t:"ellipse", cx:68, cy:79, rx:7, ry:11, fill:color },
+    { t:"ellipse", cx:51, cy:89, rx:7, ry:3, fill:light }, // лапы
+    { t:"ellipse", cx:68, cy:88, rx:7, ry:3, fill:light }
+  ];
+}
+
+// корова — bespoke вместо generic quadruped(pattern+horns): широкая морда,
+// огромные горизонтальные уши, рога, пятна, тяжёлое тело
+function cowShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#FFF4E8", spot="#75675F", inner="#E7A8A8";
+  const bodyRX=28*j(), bodyRY=23*j();
+  return [
+    { t:"ellipse", cx:38, cy:80, rx:7, ry:10, fill:color }, // дальние ноги
+    { t:"ellipse", cx:57, cy:81, rx:7, ry:10, fill:color },
+    { t:"ellipse", cx:49, cy:64, rx:bodyRX, ry:bodyRY, fill:color }, // тело — большое и тяжёлое
+    { t:"ellipse", cx:35, cy:60, rx:10, ry:8, fill:spot }, // пятна на теле
+    { t:"ellipse", cx:53, cy:70, rx:11, ry:9, fill:spot },
+    { t:"ellipse", cx:66, cy:50, rx:15, ry:20, fill:color }, // шея
+    { t:"ellipse", cx:69, cy:38, rx:18, ry:17, fill:color }, // голова
+    { t:"ellipse", cx:66, cy:35, rx:9, ry:8, fill:spot }, // пятно на голове
+    { t:"ellipse", cx:53, cy:30, rx:10, ry:5, fill:color }, // уши — широкие, горизонтальные
+    { t:"ellipse", cx:53, cy:30, rx:6, ry:3, fill:inner },
+    { t:"ellipse", cx:83, cy:30, rx:10, ry:5, fill:color },
+    { t:"ellipse", cx:83, cy:30, rx:6, ry:3, fill:inner },
+    { t:"line", x1:61, y1:27, x2:57, y2:18, stroke:T_INK, strokeWidth:4, thick:true }, // рога
+    { t:"line", x1:77, y1:27, x2:82, y2:18, stroke:T_INK, strokeWidth:4, thick:true },
+    { t:"ellipse", cx:78, cy:47, rx:15, ry:11, fill:light }, // широкая морда
+    { t:"ellipse", cx:88, cy:48, rx:8, ry:7, fill:inner },
+    { t:"circle", cx:85, cy:47, r:2, fill:T_INK }, // ноздри
+    { t:"circle", cx:91, cy:48, r:2, fill:T_INK },
+    { t:"circle", cx:72, cy:38, r:3.5, fill:T_INK }, // глаз
+    { t:"ellipse", cx:50, cy:80, rx:7, ry:11, fill:color }, // ближние ноги
+    { t:"ellipse", cx:68, cy:80, rx:7, ry:11, fill:color },
+    { t:"ellipse", cx:50, cy:89, rx:7, ry:3, fill:T_INK }, // копыта
+    { t:"ellipse", cx:68, cy:89, rx:7, ry:3, fill:T_INK }
+  ];
+}
+
+// крокодил — не стоящий зверь: длинное горизонтальное тело, это и даёт
+// узнаваемость сразу, без лишних деталей (хвост → тело → морда → зубы)
+function crocodileShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#D7E3B2";
+  const bodyRX=27*j(), bodyRY=17*j();
+  return [
+    { t:"ellipse", cx:25, cy:67, rx:25, ry:9, fill:color }, // хвост — огромная часть силуэта
+    { t:"poly", p:[[9,64],[5,59],[8,57],[18,62]], fill:color },
+    { t:"ellipse", cx:50, cy:63, rx:bodyRX, ry:bodyRY, fill:color }, // тело
+    { t:"poly", p:[[28,51],[33,45],[37,52]], fill:color }, // бугорки на спине
+    { t:"poly", p:[[39,48],[44,42],[48,49]], fill:color },
+    { t:"poly", p:[[51,47],[56,41],[60,49]], fill:color },
+    { t:"poly", p:[[63,50],[68,45],[72,53]], fill:color },
+    { t:"ellipse", cx:51, cy:68, rx:24, ry:9, fill:light }, // светлый живот
+    { t:"ellipse", cx:70, cy:52, rx:13, ry:14, fill:color }, // шея
+    { t:"ellipse", cx:80, cy:45, rx:18, ry:14, fill:color }, // голова
+    { t:"ellipse", cx:91, cy:48, rx:13, ry:8, fill:color }, // длинная морда
+    { t:"ellipse", cx:91, cy:54, rx:12, ry:5, fill:light }, // нижняя челюсть
+    { t:"circle", cx:79, cy:38, r:4, fill:T_INK }, // глаз
+    { t:"circle", cx:78, cy:37, r:1.3, fill:"#fff" },
+    { t:"circle", cx:98, cy:46, r:2, fill:T_INK }, // ноздри
+    { t:"poly", p:[[84,53],[87,58],[89,53]], fill:"#fff" }, // зубы
+    { t:"poly", p:[[90,53],[93,58],[95,53]], fill:"#fff" },
+    { t:"ellipse", cx:68, cy:68, rx:7, ry:5, fill:color }, // передние лапы
+    { t:"ellipse", cx:78, cy:69, rx:7, ry:5, fill:color },
+    { t:"ellipse", cx:34, cy:73, rx:9, ry:5, fill:color }, // задние лапы
+    { t:"line", x1:65, y1:70, x2:62, y2:73, stroke:T_INK, strokeWidth:2, crisp:true }, // пальцы
+    { t:"line", x1:73, y1:70, x2:71, y2:73, stroke:T_INK, strokeWidth:2, crisp:true }
+  ];
+}
+
+// бегемот — огромная туша, маленькие круглые уши, гигантская широкая
+// морда — важно НЕ делать морду хоботоподобной
+function hippoShapes(color, seed){
+  const rng = rngFromSeed(seed), j = () => 0.92 + rng()*0.16;
+  const light="#E8C7C9", inner="#C88D96";
+  const bodyRX=29*j(), bodyRY=23*j();
+  return [
+    { t:"ellipse", cx:37, cy:78, rx:8, ry:10, fill:color }, // дальние ноги
+    { t:"ellipse", cx:56, cy:80, rx:8, ry:10, fill:color },
+    { t:"ellipse", cx:49, cy:64, rx:bodyRX, ry:bodyRY, fill:color }, // огромное тело
+    { t:"ellipse", cx:65, cy:51, rx:17, ry:18, fill:color }, // шея
+    { t:"ellipse", cx:69, cy:40, rx:20, ry:18, fill:color }, // голова
+    { t:"circle", cx:57, cy:25, r:7, fill:color }, // уши — маленькие и круглые
+    { t:"circle", cx:57, cy:25, r:4, fill:inner },
+    { t:"circle", cx:78, cy:24, r:7, fill:color },
+    { t:"circle", cx:78, cy:24, r:4, fill:inner },
+    { t:"ellipse", cx:80, cy:48, rx:18, ry:13, fill:light }, // огромная морда
+    { t:"ellipse", cx:91, cy:49, rx:10, ry:8, fill:inner }, // носовая часть
+    { t:"ellipse", cx:88, cy:47, rx:2.5, ry:2, fill:T_INK }, // ноздри
+    { t:"ellipse", cx:95, cy:48, rx:2.5, ry:2, fill:T_INK },
+    { t:"circle", cx:71, cy:37, r:3, fill:T_INK }, // глаз — маленький
+    { t:"circle", cx:70, cy:36, r:1, fill:"#fff" },
+    { t:"line", x1:80, y1:56, x2:94, y2:56, stroke:T_INK, strokeWidth:2, crisp:true }, // рот — короткая линия
+    { t:"ellipse", cx:50, cy:80, rx:8, ry:11, fill:color }, // ближние ноги
+    { t:"ellipse", cx:68, cy:79, rx:8, ry:11, fill:color },
+    { t:"ellipse", cx:50, cy:89, rx:8, ry:4, fill:light }, // стопы
+    { t:"ellipse", cx:68, cy:88, rx:8, ry:4, fill:light }
   ];
 }
 
@@ -1842,15 +2253,18 @@ const TEMPLATES = {
   mouse: (c,seed) => quadruped({ color:hexOr(c,"#C9CCD6"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"straight", bodyRX:24, bodyRY:14, headR:13, legStyle:"short" }),
   rabbit: (c,seed) => rabbitShapes(hexOr(c,"#F5F0E6"), seed),
   fox: (c,seed) => foxShapes(hexOr(c,"#E8702A"), seed),
-  wolf: (c,seed) => quadruped({ color:hexOr(c,"#8D97A5"), rng:rngFromSeed(seed), earStyle:"triangle", tailStyle:["straight","wag"], snout:true, bodyRX:36, bodyRY:19 }),
+  wolf: (c,seed) => wolfShapes(hexOr(c,"#8D97A5"), seed),
   bear: (c,seed) => bearShapes(hexOr(c,"#8B5A2B"), seed),
-  lion: (c,seed) => quadruped({ color:hexOr(c,"#E8B64A"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"wag", mane:true }),
-  elephant: c => elephantShapes(hexOr(c,"#B0B6BE")),
+  lion: (c,seed) => lionShapes(hexOr(c,"#E8B64A"), seed),
+  tiger: (c,seed) => tigerShapes(hexOr(c,"#F2A33C"), seed),
+  elephant: (c,seed) => elephantShapes(hexOr(c,"#B0B6BE"), seed),
   giraffe: (c,seed) => giraffeShapes(hexOr(c,"#F2C94C"), seed),
   zebra: (c,seed) => quadruped({ color:hexOr(c,"#FFFFFF"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"fluffy", legStyle:"long", pattern:"stripes" }),
-  cow: (c,seed) => quadruped({ color:hexOr(c,"#FFFFFF"), rng:rngFromSeed(seed), earStyle:"round", tailStyle:"wag", pattern:["spots","spots","none"], legStyle:"long", horns:true }),
-  horse: (c,seed) => quadruped({ color:hexOr(c,"#8B5A2B"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"fluffy", legStyle:"long", bodyRX:38, bodyRY:19, headStyle:"muzzle" }),
-  pig: (c,seed) => quadruped({ color:hexOr(c,"#F6A6B2"), rng:rngFromSeed(seed), earStyle:"tiny", tailStyle:"curly", legStyle:"short", snout:true }),
+  cow: (c,seed) => cowShapes(hexOr(c,"#FFFFFF"), seed),
+  crocodile: (c,seed) => crocodileShapes(hexOr(c,"#6FA85C"), seed),
+  hippo: (c,seed) => hippoShapes(hexOr(c,"#B5A0A3"), seed),
+  horse: (c,seed) => horseShapes(hexOr(c,"#8B5A2B"), seed),
+  pig: (c,seed) => pigShapes(hexOr(c,"#F6A6B2"), seed),
   sheep: (c,seed) => sheepShapes(hexOr(c,"#FFF8EA"), seed),
   goat: (c,seed) => goatShapes(hexOr(c,"#F2EFE4"), seed),
   hedgehog: (c,seed) => hedgehogShapes(hexOr(c,"#8B7355"), seed),
@@ -1867,7 +2281,7 @@ const TEMPLATES = {
   bird: (c,seed) => birdBase({ color:hexOr(c,"#4FA3E3"), rng:rngFromSeed(seed) }),
   owl: (c,seed) => birdBase({ color:hexOr(c,"#8B6B4A"), rng:rngFromSeed(seed), earTufts:true, bigEyes:true }),
   parrot: (c,seed) => birdBase({ color:hexOr(c,"#45C26B"), rng:rngFromSeed(seed), wingColor:"#F2C94C", multiTail:["#E85D5D","#F2C94C","#4F8FE3"], crestColor:"#E85D5D" }),
-  penguin: (c,seed) => birdBase({ color:hexOr(c,"#2B2E36"), rng:rngFromSeed(seed), bellyPatch:true, beakColor:"#F2994A" }),
+  penguin: (c,seed) => penguinShapes(hexOr(c,"#2B2E36"), seed),
   peacock: (c,seed) => birdBase({ color:hexOr(c,"#2FAE8E"), rng:rngFromSeed(seed), fanTail:true }),
   goose: c => gooseShapes(hexOr(c,"#F2F0E8")),
   duck: c => duckShapes(hexOr(c,"#F7D154")),
@@ -1877,10 +2291,11 @@ const TEMPLATES = {
   bun: c => bunShapes(hexOr(c,"#E8B86D")),
 
   fish: c => fishBase({ color:hexOr(c,"#4FA3E3") }),
-  dolphin: c => fishBase({ color:hexOr(c,"#8AA9C9"), curvedBody:true, beak:true }),
-  whale: c => fishBase({ color:hexOr(c,"#5C7FA0"), curvedBody:true, spout:true }),
+  dolphin: (c,seed) => dolphinShapes(hexOr(c,"#8AA9C9"), seed),
+  whale: (c,seed) => whaleShapes(hexOr(c,"#5C7FA0"), seed),
+  seal: (c,seed) => sealShapes(hexOr(c,"#B7A99A"), seed),
   crab: c => crabShapes(hexOr(c,"#E25C45")),
-  octopus: c => tentacled({ color:hexOr(c,"#C25FBD"), arms:8, face:true }),
+  octopus: (c,seed) => octopusShapes(hexOr(c,"#C25FBD"), seed),
   jellyfish: c => tentacled({ color:hexOr(c,"#C9A6E0"), arms:6, face:false }),
   starfish: c => starfishShapes(hexOr(c,"#F2994A")),
 
@@ -2261,6 +2676,7 @@ function parseModelResponse(text){
    10. ОЗВУЧКА
    ============================================================ */
 function speak(text, onEnd){
+  if(settings.muted){ if(onEnd) onEnd(); return; }
   if(!text || !("speechSynthesis" in window)){ if(onEnd) onEnd(); return; }
   try{
     speechSynthesis.cancel();
@@ -2275,6 +2691,7 @@ function speak(text, onEnd){
 }
 // проигрывает записанные своим голосом клипы по очереди (не одновременно)
 function playVoiceQueue(phrases){
+  if(settings.muted) return;
   if(!phrases.length) return;
   const [first, ...rest] = phrases;
   const clip = voiceLib[first];
@@ -2303,10 +2720,13 @@ async function handleTemplateRequest(phrase){
   // такой add молча не рисуется; если из-за этого вообще ничего не изменилось,
   // "say" модели ("Нарисовал дракона!") было бы враньём, не доверяем ему
   const hadUnknownTemplate = ops.some(o => o && o.op === "add" && !TEMPLATES[String(o.template || "")]);
-  const addedSounds = ops
+  let addedSounds = ops
     .filter(o => o && o.op === "add" && TEMPLATES[String(o.template || "")])
     .map(o => TEMPLATE_SOUND[o.template])
     .filter(Boolean);
+  // больше 2 зверей/объектов за раз — звуки все разом превращаются в кашу,
+  // лучше вообще без звуков, чем хор из 10 разных "мяу/гав/му"
+  if(addedSounds.length > 2) addedSounds = [];
   busy = false;               // чтобы applyOps/кнопки обновились корректно
   const changed = ops.length ? applyOps(ops) : false;
   if(hadUnknownTemplate && !changed){
